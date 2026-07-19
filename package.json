@@ -1,0 +1,29 @@
+{
+  "name": "klaivo",
+  "version": "0.1.0",
+  "description": "Klaivo: AI-powered adaptive learning platform MVP",
+  "main": "server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsc && node dist/server.js",
+    "build:client": "esbuild public/js/app.ts --bundle --outfile=public/js/app.js --sourcemap",
+    "watch:client": "esbuild public/js/app.ts --bundle --outfile=public/js/app.js --sourcemap --watch"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "better-sqlite3": "^11.1.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^26.1.1",
+    "esbuild": "^0.28.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^7.0.2"
+  }
+}
