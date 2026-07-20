@@ -1,17 +1,11 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getModelProvider } from '../providers/modelProvider';
 import { Session, DiagnosisAgentOutput } from '../types';
 
 /**
  * Diagnosis Agent - Context gathering conversation and parameter extraction.
  */
 export async function getDiagnosticQuestion(intent: string, prompt: string): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return `Welcome to Klaivo! To help you learn "${prompt}", do you have a specific syllabus, exam date, or particular topics you want to focus on? You can paste text or upload a PDF.`;
-  }
-
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
+  const fallback = `Welcome to Klaivo! To help you learn "${prompt}", do you have a specific syllabus, exam date, or particular topics you want to focus on? You can paste text or upload a PDF.`;
 
   const systemInstruction = `
     You are a Diagnosis Agent. The user wants to start a learning session.
@@ -24,11 +18,12 @@ export async function getDiagnosticQuestion(intent: string, prompt: string): Pro
   `;
 
   try {
-    const result = await model.generateContent(systemInstruction);
-    return result.response.text().trim();
+    const provider = getModelProvider();
+    const result = await provider.generateText(prompt, systemInstruction);
+    return result.trim() || fallback;
   } catch (err) {
     console.error('[DiagnosisAgent] Error getting initial question:', err);
-    return `Welcome to Klaivo! To help you learn "${prompt}", do you have a specific syllabus, exam date, or particular topics you want to focus on? You can paste text or upload a PDF.`;
+    return fallback;
   }
 }
 
@@ -37,26 +32,16 @@ export async function processDiagnosticTurn(
   userMessage: string,
   attachedDocsText: string
 ): Promise<DiagnosisAgentOutput> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    // Fallback stub
-    return {
-      readyForPath: true,
-      feedback: `Perfect, I've analyzed your inputs and goals! I am now generating a personalized concept path for you...`,
-      summary: {
-        userGoal: session.title,
-        intent: session.intent,
-        extractedContext: userMessage + (attachedDocsText ? '\n' + attachedDocsText : ''),
-        calibration: session.calibration
-      }
-    };
-  }
-
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-3.5-flash',
-    generationConfig: { responseMimeType: 'application/json' }
-  });
+  const fallbackOutput: DiagnosisAgentOutput = {
+    readyForPath: true,
+    feedback: `Got it! Let's generate your learning path.`,
+    summary: {
+      userGoal: session.title,
+      intent: session.intent,
+      extractedContext: userMessage + (attachedDocsText ? '\n' + attachedDocsText : ''),
+      calibration: session.calibration
+    }
+  };
 
   const systemInstruction = `
     You are the Diagnosis Agent for Klaivo, an AI-powered adaptive learning platform.
@@ -90,21 +75,15 @@ export async function processDiagnosticTurn(
   `;
 
   try {
-    const result = await model.generateContent(systemInstruction);
-    const text = result.response.text();
-    console.log('[DiagnosisAgent] Turn Response JSON:', text);
-    return JSON.parse(text) as DiagnosisAgentOutput;
+    const provider = getModelProvider();
+    const output = await provider.generateJSON<DiagnosisAgentOutput>(
+      `User message: ${userMessage}`,
+      systemInstruction
+    );
+    console.log('[DiagnosisAgent] Turn Response JSON:', output);
+    return output;
   } catch (err) {
     console.error('[DiagnosisAgent] Turn analysis failed:', err);
-    return {
-      readyForPath: true,
-      feedback: `Got it! Let's generate your learning path.`,
-      summary: {
-        userGoal: session.title,
-        intent: session.intent,
-        extractedContext: userMessage,
-        calibration: session.calibration
-      }
-    };
+    return fallbackOutput;
   }
 }

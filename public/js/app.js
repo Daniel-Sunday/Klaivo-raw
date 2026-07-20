@@ -229,12 +229,7 @@
       if (!text) return "";
       return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/\*(.*?)\*/g, "<em>$1</em>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\n/g, "<br>");
     }
-    function appendMessage(sender, content, nodeId = null) {
-      const wrapper = document.createElement("div");
-      wrapper.className = `message-wrapper ${sender}`;
-      if (nodeId) wrapper.dataset.nodeId = nodeId;
-      const bubble = document.createElement("div");
-      bubble.className = "message-bubble";
+    function renderMessageBubble(bubble, content) {
       if (content.includes("ASSESSMENT QUESTION:") || content.includes("CHECK YOUR UNDERSTANDING:")) {
         const parts = content.split(/(ASSESSMENT QUESTION:|CHECK YOUR UNDERSTANDING:)/i);
         const mainText = parts[0];
@@ -250,6 +245,14 @@
       } else {
         bubble.innerHTML = `<p>${formatMarkdown(content)}</p>`;
       }
+    }
+    function appendMessage(sender, content, nodeId = null) {
+      const wrapper = document.createElement("div");
+      wrapper.className = `message-wrapper ${sender}`;
+      if (nodeId) wrapper.dataset.nodeId = nodeId;
+      const bubble = document.createElement("div");
+      bubble.className = "message-bubble";
+      renderMessageBubble(bubble, content);
       wrapper.appendChild(bubble);
       chatHistory.appendChild(wrapper);
       chatHistory.scrollTop = chatHistory.scrollHeight;
@@ -357,7 +360,7 @@
           if (!currentMsgWrapper) {
             currentMsgWrapper = appendMessage("assistant", streamedContent, node.id);
           } else {
-            currentMsgWrapper.querySelector(".message-bubble").innerHTML = formatMarkdown(streamedContent);
+            renderMessageBubble(currentMsgWrapper.querySelector(".message-bubble"), streamedContent);
             chatHistory.scrollTop = chatHistory.scrollHeight;
           }
         }
@@ -441,7 +444,7 @@
               if (!currentMsgWrapper) {
                 currentMsgWrapper = appendMessage("assistant", streamedContent, activeNodeId);
               } else {
-                currentMsgWrapper.querySelector(".message-bubble").innerHTML = formatMarkdown(streamedContent);
+                renderMessageBubble(currentMsgWrapper.querySelector(".message-bubble"), streamedContent);
                 chatHistory.scrollTop = chatHistory.scrollHeight;
               }
             }

@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getModelProvider } from '../providers/modelProvider';
 import { CurriculumNode, Calibration, AssessmentAgentOutput } from '../types';
 
 type NodeTemplate = Omit<CurriculumNode, 'session_id'>;
@@ -12,17 +12,6 @@ export async function assessAnswer(
   calibration: Calibration,
   answer: string
 ): Promise<AssessmentAgentOutput> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return getFallbackAssessment(node, calibration, answer);
-  }
-
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-3.5-flash',
-    generationConfig: { responseMimeType: 'application/json' }
-  });
-
   const systemInstruction = `
     You are the Assessment & Reflection Agent for Klaivo.
     Your job is to grade the user's answer to the assessment question posed in the teaching material.
@@ -53,10 +42,13 @@ export async function assessAnswer(
   `;
 
   try {
-    const result = await model.generateContent(systemInstruction);
-    const text = result.response.text();
-    console.log('[AssessmentAgent] API Grading JSON:', text);
-    return JSON.parse(text) as AssessmentAgentOutput;
+    const provider = getModelProvider();
+    const result = await provider.generateJSON<AssessmentAgentOutput>(
+      `Assess answer: "${answer}"`,
+      systemInstruction
+    );
+    console.log('[AssessmentAgent] API Grading JSON:', result);
+    return result;
   } catch (err) {
     console.error('[AssessmentAgent] API call failed, falling back to stub:', err);
     return getFallbackAssessment(node, calibration, answer);

@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getModelProvider } from '../providers/modelProvider';
 import { CurriculumNode, Calibration, Message, WriteChunkCallback } from '../types';
 
 type NodeTemplate = Omit<CurriculumNode, 'session_id'>;
@@ -11,15 +11,6 @@ export async function streamExplanation(
   calibration: Calibration,
   writeChunk: WriteChunkCallback
 ): Promise<void> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.warn('[TeachingAgent] API Key missing. Falling back to stub explanation.');
-    return getStubExplanation(node, calibration, writeChunk);
-  }
-
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
-
   const systemInstruction = `
     You are the Teaching Agent for Klaivo, an AI-powered adaptive learning platform.
     Teach the following concept to the learner:
@@ -40,11 +31,12 @@ export async function streamExplanation(
   `;
 
   try {
-    const resultStream = await model.generateContentStream(systemInstruction);
-    for await (const chunk of resultStream.stream) {
-      const chunkText = chunk.text();
-      writeChunk(chunkText);
-    }
+    const provider = getModelProvider();
+    await provider.streamText(
+      `Teach me ${node.title}`,
+      systemInstruction,
+      writeChunk
+    );
   } catch (error) {
     console.error('[TeachingAgent] API streaming failed:', error);
     return getStubExplanation(node, calibration, writeChunk);
@@ -135,14 +127,6 @@ export async function streamFollowUpAnswer(
   chatHistoryList: Message[],
   writeChunk: WriteChunkCallback
 ): Promise<void> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return getStubFollowUpAnswer(node, writeChunk);
-  }
-
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
-
   const historyText = chatHistoryList.map(msg => `${msg.sender === 'user' ? 'User' : 'Assistant'}: ${msg.content}`).join('\n');
 
   const systemInstruction = `
@@ -160,11 +144,12 @@ export async function streamFollowUpAnswer(
   `;
 
   try {
-    const resultStream = await model.generateContentStream(systemInstruction);
-    for await (const chunk of resultStream.stream) {
-      const chunkText = chunk.text();
-      writeChunk(chunkText);
-    }
+    const provider = getModelProvider();
+    await provider.streamText(
+      `Follow up question for ${node.title}`,
+      systemInstruction,
+      writeChunk
+    );
   } catch (error) {
     console.error('[TeachingAgent] Streaming follow-up failed:', error);
     return getStubFollowUpAnswer(node, writeChunk);

@@ -61,15 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/\n/g, '<br>');
   }
 
-  function appendMessage(sender: 'user' | 'assistant' | 'system', content: string, nodeId: string | null = null): HTMLDivElement {
-    const wrapper = document.createElement('div');
-    wrapper.className = `message-wrapper ${sender}`;
-    if (nodeId) wrapper.dataset.nodeId = nodeId;
-    
-    const bubble = document.createElement('div');
-    bubble.className = 'message-bubble';
-    
-    // Parse mini application checks and highlight
+  function renderMessageBubble(bubble: HTMLElement, content: string): void {
     if (content.includes('ASSESSMENT QUESTION:') || content.includes('CHECK YOUR UNDERSTANDING:')) {
       const parts = content.split(/(ASSESSMENT QUESTION:|CHECK YOUR UNDERSTANDING:)/i);
       const mainText = parts[0];
@@ -86,6 +78,17 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       bubble.innerHTML = `<p>${formatMarkdown(content)}</p>`;
     }
+  }
+
+  function appendMessage(sender: 'user' | 'assistant' | 'system', content: string, nodeId: string | null = null): HTMLDivElement {
+    const wrapper = document.createElement('div');
+    wrapper.className = `message-wrapper ${sender}`;
+    if (nodeId) wrapper.dataset.nodeId = nodeId;
+    
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble';
+    
+    renderMessageBubble(bubble, content);
     
     wrapper.appendChild(bubble);
     chatHistory.appendChild(wrapper);
@@ -237,7 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!currentMsgWrapper) {
           currentMsgWrapper = appendMessage('assistant', streamedContent, node.id);
         } else {
-          currentMsgWrapper.querySelector('.message-bubble')!.innerHTML = formatMarkdown(streamedContent);
+          renderMessageBubble(currentMsgWrapper.querySelector('.message-bubble') as HTMLElement, streamedContent);
           chatHistory.scrollTop = chatHistory.scrollHeight;
         }
       }
@@ -349,7 +352,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!currentMsgWrapper) {
               currentMsgWrapper = appendMessage('assistant', streamedContent, activeNodeId);
             } else {
-              currentMsgWrapper.querySelector('.message-bubble')!.innerHTML = formatMarkdown(streamedContent);
+              renderMessageBubble(currentMsgWrapper.querySelector('.message-bubble') as HTMLElement, streamedContent);
               chatHistory.scrollTop = chatHistory.scrollHeight;
             }
           }

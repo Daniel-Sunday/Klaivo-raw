@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getModelProvider } from '../providers/modelProvider';
 import { CurriculumNode, RoutingClassification, RoutingAgentOutput } from '../types';
 
 type NodeTemplate = Omit<CurriculumNode, 'session_id'>;
@@ -8,22 +8,6 @@ type NodeTemplate = Omit<CurriculumNode, 'session_id'>;
  * Classifies if a user message is a follow-up question or an assessment answer.
  */
 export async function classifyMessageIntent(node: NodeTemplate, content: string): Promise<RoutingClassification> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    // Fallback keyword-based classification
-    const text = content.toLowerCase();
-    if (text.includes('explain') || text.includes('what') || text.includes('how') || text.includes('why') || text.includes('help') || text.includes('understand') || text.includes('?') || text.includes('mean')) {
-      return 'question';
-    }
-    return 'answer';
-  }
-
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-3.5-flash',
-    generationConfig: { responseMimeType: 'application/json' }
-  });
-
   const systemInstruction = `
     You are a message router for Klaivo, an adaptive learning app.
     The user is studying the concept node: "${node.title}" (${node.description}).
@@ -40,14 +24,19 @@ export async function classifyMessageIntent(node: NodeTemplate, content: string)
   `;
 
   try {
-    const result = await model.generateContent([
-      { text: systemInstruction },
-      { text: `User Message: "${content}"` }
-    ]);
-    const data = JSON.parse(result.response.text()) as RoutingAgentOutput;
+    const provider = getModelProvider();
+    const data = await provider.generateJSON<RoutingAgentOutput>(
+      `User Message: "${content}"`,
+      systemInstruction
+    );
     return data.classification || 'answer';
   } catch (err) {
     console.error('[RoutingAgent] Classification error:', err);
-    return 'answer'; // Default to answer to be safe
+    // Fallback keyword-based classification
+    const text = content.toLowerCase();
+    if (text.includes('explain') || text.includes('what') || text.includes('how') || text.includes('why') || text.includes('help') || text.includes('understand') || text.includes('?') || text.includes('mean')) {
+      return 'question';
+    }
+    return 'answer';
   }
 }

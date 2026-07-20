@@ -8,6 +8,8 @@
   --panel-border-glow: rgba(99, 102, 241, 0.15);
   
   --accent-primary: #6366f1; /* Indigo */
+  --accent-indigo: #6366f1;
+  --accent-indigo-light: rgba(99, 102, 241, 0.12);
   --accent-secondary: #8b5cf6; /* Violet */
   --accent-emerald: #10b981; /* Emerald */
   --accent-rose: #f43f5e; /* Rose */
@@ -423,7 +425,7 @@ header.app-header {
 /* Assessment Card inside chat */
 .assessment-card {
   margin-top: 14px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--accent-indigo-light);
   border: 1px dashed var(--accent-indigo);
   border-radius: 12px;
   padding: 16px;

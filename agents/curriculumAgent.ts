@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getModelProvider } from '../providers/modelProvider';
 import { DiagnosisAgentSummary, CurriculumNode } from '../types';
 
 type NodeTemplate = Omit<CurriculumNode, 'session_id'>;
@@ -8,17 +8,6 @@ type NodeTemplate = Omit<CurriculumNode, 'session_id'>;
  * Generates personalized learning paths with dependency nodes and coordinates.
  */
 export async function generateCurriculum(sessionSummary: DiagnosisAgentSummary): Promise<NodeTemplate[]> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return getFallbackCurriculum(sessionSummary.userGoal);
-  }
-
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-3.5-flash',
-    generationConfig: { responseMimeType: 'application/json' }
-  });
-
   const systemInstruction = `
     You are the Curriculum & Knowledge Graph Agent for Klaivo.
     Your job is to break down the user's learning goal into a sequence of 5 to 7 core concept nodes and establish their dependencies.
@@ -39,7 +28,7 @@ export async function generateCurriculum(sessionSummary: DiagnosisAgentSummary):
        - The first node (index 0) starts near x=100, y=600.
        - Succeeding nodes must increase in X (moving right) and decrease in Y (moving up) to represent progression.
        - Branching paths (parallel concepts) are highly encouraged where concepts can be learned concurrently, then merging later.
-     5. The first node (order_index: 0) must have status: "available" and dependencies: []. All other nodes must have status: "locked".
+      5. The first node (order_index: 0) must have status: "available" and dependencies: []. All other nodes must have status: "locked".
     
     Return a JSON array of nodes matching this schema:
     [
@@ -58,13 +47,15 @@ export async function generateCurriculum(sessionSummary: DiagnosisAgentSummary):
   `;
 
   try {
-    const result = await model.generateContent(systemInstruction);
-    const text = result.response.text();
-    console.log('[CurriculumAgent] Graph Response JSON:', text);
+    const provider = getModelProvider();
+    let nodes = await provider.generateJSON<NodeTemplate[]>(
+      `Generate curriculum path for goal: "${sessionSummary.userGoal}"`,
+      systemInstruction
+    );
+    console.log('[CurriculumAgent] Graph Response JSON:', nodes);
     
-    let nodes = JSON.parse(text);
     if (!Array.isArray(nodes)) {
-      throw new Error('Graph is not an array');
+      throw new Error('Graph output is not an array');
     }
 
     // Apply auto-layout coordinate fallback & validation
@@ -106,7 +97,6 @@ function validateAndLayoutNodes(nodes: any[]): NodeTemplate[] {
 function getFallbackCurriculum(goal: string): NodeTemplate[] {
   console.log('[CurriculumAgent] Loading default WAEC Organic Chemistry syllabus template.');
   
-  // Standard high-quality 6-node WAEC Organic Chemistry path template
   const nodes: NodeTemplate[] = [
     {
       id: 'node_1',
