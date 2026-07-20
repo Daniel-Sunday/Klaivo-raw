@@ -23,7 +23,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const onboardingFilesList = document.getElementById('onboarding-files-list') as HTMLElement;
   const startSessionBtn = document.getElementById('start-session-btn') as HTMLButtonElement;
   
-  // Workspace Sidebar
+  // Workspace Sidebar & Layout Controls
+  const chatSidebar = document.getElementById('chat-sidebar') as HTMLElement;
+  const panelResizer = document.getElementById('panel-resizer') as HTMLElement;
+  const toggleSidebarBtn = document.getElementById('toggle-sidebar-btn') as HTMLButtonElement;
+  const expandSidebarBtn = document.getElementById('expand-sidebar-btn') as HTMLButtonElement;
+
   const sidebarNodeTitle = document.getElementById('sidebar-node-title') as HTMLElement;
   const sidebarNodeStatus = document.getElementById('sidebar-node-status') as HTMLElement;
   const exitNodeBtn = document.getElementById('exit-node-btn') as HTMLButtonElement;
@@ -37,6 +42,56 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Initialize SVG Canvas
   const canvas = new ConceptCanvas('concept-svg');
+
+  // --- Resizable & Collapsible Layout Handlers ---
+  let isResizing = false;
+
+  function toggleSidebar(collapsed?: boolean): void {
+    const shouldCollapse = collapsed !== undefined ? collapsed : !chatSidebar.classList.contains('collapsed');
+    if (shouldCollapse) {
+      chatSidebar.classList.add('collapsed');
+      expandSidebarBtn.classList.remove('hidden');
+      panelResizer.style.display = 'none';
+    } else {
+      chatSidebar.classList.remove('collapsed');
+      expandSidebarBtn.classList.add('hidden');
+      panelResizer.style.display = 'block';
+    }
+  }
+
+  toggleSidebarBtn?.addEventListener('click', () => toggleSidebar(true));
+  expandSidebarBtn?.addEventListener('click', () => toggleSidebar(false));
+
+  // Keyboard shortcut Ctrl+B / Cmd+B to toggle sidebar (Cursor AI style)
+  window.addEventListener('keydown', (e: KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+      e.preventDefault();
+      toggleSidebar();
+    }
+  });
+
+  // Drag handle to resize panel width
+  panelResizer?.addEventListener('mousedown', (e: MouseEvent) => {
+    isResizing = true;
+    panelResizer.classList.add('resizing');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  window.addEventListener('mousemove', (e: MouseEvent) => {
+    if (!isResizing) return;
+    const newWidth = Math.max(280, Math.min(e.clientX, window.innerWidth * 0.7));
+    chatSidebar.style.width = `${newWidth}px`;
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (isResizing) {
+      isResizing = false;
+      panelResizer.classList.remove('resizing');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+  });
 
   // --- Utility Functions ---
   function showLoader(text: string): void {

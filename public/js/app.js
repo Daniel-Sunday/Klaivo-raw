@@ -209,6 +209,10 @@
     const onboardingFileInput = document.getElementById("onboarding-file-input");
     const onboardingFilesList = document.getElementById("onboarding-files-list");
     const startSessionBtn = document.getElementById("start-session-btn");
+    const chatSidebar = document.getElementById("chat-sidebar");
+    const panelResizer = document.getElementById("panel-resizer");
+    const toggleSidebarBtn = document.getElementById("toggle-sidebar-btn");
+    const expandSidebarBtn = document.getElementById("expand-sidebar-btn");
     const sidebarNodeTitle = document.getElementById("sidebar-node-title");
     const sidebarNodeStatus = document.getElementById("sidebar-node-status");
     const exitNodeBtn = document.getElementById("exit-node-btn");
@@ -218,6 +222,46 @@
     const canvasSessionTitle = document.getElementById("canvas-session-title");
     const canvasSessionStats = document.getElementById("canvas-session-stats");
     const canvas = new ConceptCanvas("concept-svg");
+    let isResizing = false;
+    function toggleSidebar(collapsed) {
+      const shouldCollapse = collapsed !== void 0 ? collapsed : !chatSidebar.classList.contains("collapsed");
+      if (shouldCollapse) {
+        chatSidebar.classList.add("collapsed");
+        expandSidebarBtn.classList.remove("hidden");
+        panelResizer.style.display = "none";
+      } else {
+        chatSidebar.classList.remove("collapsed");
+        expandSidebarBtn.classList.add("hidden");
+        panelResizer.style.display = "block";
+      }
+    }
+    toggleSidebarBtn?.addEventListener("click", () => toggleSidebar(true));
+    expandSidebarBtn?.addEventListener("click", () => toggleSidebar(false));
+    window.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    });
+    panelResizer?.addEventListener("mousedown", (e) => {
+      isResizing = true;
+      panelResizer.classList.add("resizing");
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!isResizing) return;
+      const newWidth = Math.max(280, Math.min(e.clientX, window.innerWidth * 0.7));
+      chatSidebar.style.width = `${newWidth}px`;
+    });
+    window.addEventListener("mouseup", () => {
+      if (isResizing) {
+        isResizing = false;
+        panelResizer.classList.remove("resizing");
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      }
+    });
     function showLoader(text) {
       progressText.textContent = text;
       progressOverlay.classList.remove("hidden");

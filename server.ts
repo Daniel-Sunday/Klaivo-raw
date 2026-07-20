@@ -378,6 +378,17 @@ async function checkAndUnlockNodes(sessionId: string): Promise<void> {
   }
 }
 
+// Global Error Handling Middleware
+app.use((err: any, req: Request, res: Response, next: any) => {
+  console.error('[server] Global Unhandled Error:', err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal Server Error'
+  });
+});
+
 // Start Server
 app.listen(port, () => {
   console.log(`Klaivo Express backend running on http://localhost:${port}`);
