@@ -1,167 +1,317 @@
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import DatabaseConstructor from 'better-sqlite3';
 import * as path from 'path';
 import * as fs from 'fs';
+import dotenv from 'dotenv';
 import { Session, CurriculumNode, Message, Calibration } from './types';
 
-// Initialize database connection
-const projectRoot = fs.existsSync(path.join(__dirname, 'public'))
-  ? __dirname
-  : path.join(__dirname, '..');
-const dbPath = path.join(projectRoot, 'klaivo.db');
-const db = new DatabaseConstructor(dbPath, { verbose: console.log });
+dotenv.config();
 
-// Enable foreign key support
-db.pragma('foreign_keys = ON');
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// Initialize Tables
-export function initDb(): void {
-  // Create sessions table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      intent TEXT,
-      status TEXT NOT NULL DEFAULT 'diagnosing',
-      calibration TEXT NOT NULL, -- JSON string
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+// Use Supabase if valid credentials are provided (and not placeholder text)
+const isSupabaseConfigured =
+  supabaseUrl &&
+  supabaseServiceRoleKey &&
+  !supabaseUrl.includes('your-project') &&
+  !supabaseServiceRoleKey.includes('your-supabase-service-role-key');
 
-  // Create nodes table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS nodes (
-      id TEXT NOT NULL,
-      session_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      description TEXT,
-      x REAL,
-      y REAL,
-      dependencies TEXT NOT NULL DEFAULT '[]', -- JSON array of parent node IDs
-      status TEXT NOT NULL DEFAULT 'locked', -- locked, available, completed
-      order_index INTEGER NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (id, session_id),
-      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-    )
-  `);
+let supabase: SupabaseClient | null = null;
+let sqliteDb: any = null;
 
-  // Create messages table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT NOT NULL,
-      node_id TEXT, -- NULL for diagnostic chat, not null for node chats
-      sender TEXT NOT NULL, -- user, assistant, system
-      content TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-    )
-  `);
+if (isSupabaseConfigured) {
+  // Service role key bypasses Row Level Security for backend server access
+  supabase = createClient(supabaseUrl!, supabaseServiceRoleKey!);
+  console.log('[Database] Using Supabase Postgres backend.');
+} else {
+  console.log('[Database] Supabase credentials not configured or placeholder detected. Using SQLite fallback.');
+  const projectRoot = fs.existsSync(path.join(__dirname, 'public'))
+    ? __dirname
+    : path.join(__dirname, '..');
+  const dbPath = path.join(projectRoot, 'klaivo.db');
+  sqliteDb = new DatabaseConstructor(dbPath, { verbose: console.log });
+  sqliteDb.pragma('foreign_keys = ON');
+}
 
-  console.log('Database tables initialized.');
+export async function initDb(): Promise<void> {
+  if (supabase) {
+    // Ping Supabase to verify connectivity
+    const { error } = await supabase.from('sessions').select('id').limit(1);
+    if (error && error.code !== 'PGRST116') {
+      console.warn('[Database] Note on Supabase sessions table query:', error.message);
+    } else {
+      console.log('[Database] Supabase connection established.');
+    }
+  } else {
+    // Create local SQLite tables
+    sqliteDb.exec(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        intent TEXT,
+        status TEXT NOT NULL DEFAULT 'diagnosing',
+        calibration TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    sqliteDb.exec(`
+      CREATE TABLE IF NOT EXISTS nodes (
+        id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        x REAL,
+        y REAL,
+        dependencies TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'locked',
+        order_index INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id, session_id),
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      )
+    `);
+    sqliteDb.exec(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        node_id TEXT,
+        sender TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      )
+    `);
+    console.log('[Database] SQLite tables initialized.');
+  }
 }
 
 // --- DB Helpers ---
 
-export function createSession(
+export async function createSession(
   id: string,
   title: string,
   intent: string,
   calibration: Calibration = { level: 'beginner', known_concepts: [], weak_points: [] }
-): Session {
-  const stmt = db.prepare(`
-    INSERT INTO sessions (id, title, intent, status, calibration)
-    VALUES (?, ?, ?, 'diagnosing', ?)
-  `);
-  stmt.run(id, title, intent, JSON.stringify(calibration));
-  const session = getSession(id);
-  if (!session) {
-    throw new Error(`Failed to create session with id: ${id}`);
+): Promise<Session> {
+  if (supabase) {
+    const { data, error } = await supabase
+      .from('sessions')
+      .insert({
+        id,
+        title,
+        intent,
+        status: 'diagnosing',
+        calibration
+      })
+      .select('*')
+      .single();
+
+    if (error) {
+      throw new Error(`[Supabase] Error creating session: ${error.message}`);
+    }
+    return data as Session;
+  } else {
+    const stmt = sqliteDb.prepare(`
+      INSERT INTO sessions (id, title, intent, status, calibration)
+      VALUES (?, ?, ?, 'diagnosing', ?)
+    `);
+    stmt.run(id, title, intent, JSON.stringify(calibration));
+    const session = await getSession(id);
+    if (!session) {
+      throw new Error(`Failed to create session with id: ${id}`);
+    }
+    return session;
   }
-  return session;
 }
 
-export function getSession(id: string): Session | undefined {
-  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as any;
-  if (session) {
-    session.calibration = JSON.parse(session.calibration);
+export async function getSession(id: string): Promise<Session | undefined> {
+  if (supabase) {
+    const { data, error } = await supabase
+      .from('sessions')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error || !data) return undefined;
+    return data as Session;
+  } else {
+    const session = sqliteDb.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as any;
+    if (session) {
+      session.calibration = typeof session.calibration === 'string'
+        ? JSON.parse(session.calibration)
+        : session.calibration;
+    }
+    return session as Session | undefined;
   }
-  return session;
 }
 
-export function updateSessionStatus(id: string, status: 'diagnosing' | 'learning'): void {
-  const stmt = db.prepare('UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
-  stmt.run(status, id);
+export async function updateSessionStatus(id: string, status: 'diagnosing' | 'learning'): Promise<void> {
+  if (supabase) {
+    const { error } = await supabase
+      .from('sessions')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (error) throw new Error(`[Supabase] Error updating status: ${error.message}`);
+  } else {
+    const stmt = sqliteDb.prepare('UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+    stmt.run(status, id);
+  }
 }
 
-export function updateSessionCalibration(id: string, calibration: Calibration): void {
-  const stmt = db.prepare('UPDATE sessions SET calibration = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
-  stmt.run(JSON.stringify(calibration), id);
+export async function updateSessionCalibration(id: string, calibration: Calibration): Promise<void> {
+  if (supabase) {
+    const { error } = await supabase
+      .from('sessions')
+      .update({ calibration, updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (error) throw new Error(`[Supabase] Error updating calibration: ${error.message}`);
+  } else {
+    const stmt = sqliteDb.prepare('UPDATE sessions SET calibration = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+    stmt.run(JSON.stringify(calibration), id);
+  }
 }
 
-export function createMessage(
+export async function createMessage(
   sessionId: string,
   nodeId: string | null,
   sender: 'user' | 'assistant' | 'system',
   content: string
-): Message {
-  const stmt = db.prepare(`
-    INSERT INTO messages (session_id, node_id, sender, content)
-    VALUES (?, ?, ?, ?)
-  `);
-  const result = stmt.run(sessionId, nodeId, sender, content);
-  return { id: Number(result.lastInsertRowid), session_id: sessionId, node_id: nodeId, sender, content };
-}
+): Promise<Message> {
+  if (supabase) {
+    const { data, error } = await supabase
+      .from('messages')
+      .insert({
+        session_id: sessionId,
+        node_id: nodeId,
+        sender,
+        content
+      })
+      .select('*')
+      .single();
 
-export function getMessages(sessionId: string, nodeId: string | null = null): Message[] {
-  if (nodeId) {
-    return db.prepare('SELECT * FROM messages WHERE session_id = ? AND node_id = ? ORDER BY created_at ASC').all(sessionId, nodeId) as Message[];
+    if (error) throw new Error(`[Supabase] Error creating message: ${error.message}`);
+    return data as Message;
   } else {
-    return db.prepare('SELECT * FROM messages WHERE session_id = ? AND node_id IS NULL ORDER BY created_at ASC').all(sessionId) as Message[];
+    const stmt = sqliteDb.prepare(`
+      INSERT INTO messages (session_id, node_id, sender, content)
+      VALUES (?, ?, ?, ?)
+    `);
+    const result = stmt.run(sessionId, nodeId, sender, content);
+    return { id: Number(result.lastInsertRowid), session_id: sessionId, node_id: nodeId, sender, content };
   }
 }
 
-export function createNodes(nodesList: CurriculumNode[]): void {
-  const insert = db.prepare(`
-    INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index)
-    VALUES (@id, @session_id, @title, @description, @x, @y, @dependencies, @status, @order_index)
-  `);
+export async function getMessages(sessionId: string, nodeId: string | null = null): Promise<Message[]> {
+  if (supabase) {
+    let query = supabase
+      .from('messages')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: true });
 
-  const insertMany = db.transaction((list: CurriculumNode[]) => {
-    for (const node of list) {
-      insert.run({
-        id: node.id,
-        session_id: node.session_id,
-        title: node.title,
-        description: node.description || '',
-        x: node.x,
-        y: node.y,
-        dependencies: JSON.stringify(node.dependencies || []),
-        status: node.status || 'locked',
-        order_index: node.order_index
-      });
+    if (nodeId) {
+      query = query.eq('node_id', nodeId);
+    } else {
+      query = query.is('node_id', null);
     }
-  });
 
-  insertMany(nodesList);
+    const { data, error } = await query;
+    if (error) throw new Error(`[Supabase] Error fetching messages: ${error.message}`);
+    return data as Message[];
+  } else {
+    if (nodeId) {
+      return sqliteDb.prepare('SELECT * FROM messages WHERE session_id = ? AND node_id = ? ORDER BY created_at ASC').all(sessionId, nodeId) as Message[];
+    } else {
+      return sqliteDb.prepare('SELECT * FROM messages WHERE session_id = ? AND node_id IS NULL ORDER BY created_at ASC').all(sessionId) as Message[];
+    }
+  }
 }
 
-export function getNodes(sessionId: string): CurriculumNode[] {
-  const list = db.prepare('SELECT * FROM nodes WHERE session_id = ? ORDER BY order_index ASC').all(sessionId) as any[];
-  return list.map(node => {
-    node.dependencies = JSON.parse(node.dependencies);
-    return node as CurriculumNode;
-  });
+export async function createNodes(nodesList: CurriculumNode[]): Promise<void> {
+  if (supabase) {
+    const formattedNodes = nodesList.map(n => ({
+      id: n.id,
+      session_id: n.session_id,
+      title: n.title,
+      description: n.description || '',
+      x: n.x,
+      y: n.y,
+      dependencies: n.dependencies || [],
+      status: n.status || 'locked',
+      order_index: n.order_index
+    }));
+
+    const { error } = await supabase
+      .from('nodes')
+      .insert(formattedNodes);
+
+    if (error) throw new Error(`[Supabase] Error creating nodes: ${error.message}`);
+  } else {
+    const insert = sqliteDb.prepare(`
+      INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index)
+      VALUES (@id, @session_id, @title, @description, @x, @y, @dependencies, @status, @order_index)
+    `);
+
+    const insertMany = sqliteDb.transaction((list: CurriculumNode[]) => {
+      for (const node of list) {
+        insert.run({
+          id: node.id,
+          session_id: node.session_id,
+          title: node.title,
+          description: node.description || '',
+          x: node.x,
+          y: node.y,
+          dependencies: JSON.stringify(node.dependencies || []),
+          status: node.status || 'locked',
+          order_index: node.order_index
+        });
+      }
+    });
+
+    insertMany(nodesList);
+  }
 }
 
-export function updateNodeStatus(
+export async function getNodes(sessionId: string): Promise<CurriculumNode[]> {
+  if (supabase) {
+    const { data, error } = await supabase
+      .from('nodes')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('order_index', { ascending: true });
+
+    if (error) throw new Error(`[Supabase] Error fetching nodes: ${error.message}`);
+    return data as CurriculumNode[];
+  } else {
+    const list = sqliteDb.prepare('SELECT * FROM nodes WHERE session_id = ? ORDER BY order_index ASC').all(sessionId) as any[];
+    return list.map(node => {
+      node.dependencies = typeof node.dependencies === 'string'
+        ? JSON.parse(node.dependencies)
+        : node.dependencies;
+      return node as CurriculumNode;
+    });
+  }
+}
+
+export async function updateNodeStatus(
   sessionId: string,
   nodeId: string,
   status: 'locked' | 'available' | 'completed' | 'active'
-): void {
-  const stmt = db.prepare('UPDATE nodes SET status = ? WHERE session_id = ? AND id = ?');
-  stmt.run(status, sessionId, nodeId);
-}
+): Promise<void> {
+  if (supabase) {
+    const { error } = await supabase
+      .from('nodes')
+      .update({ status })
+      .eq('session_id', sessionId)
+      .eq('id', nodeId);
 
-export { db };
+    if (error) throw new Error(`[Supabase] Error updating node status: ${error.message}`);
+  } else {
+    const stmt = sqliteDb.prepare('UPDATE nodes SET status = ? WHERE session_id = ? AND id = ?');
+    stmt.run(status, sessionId, nodeId);
+  }
+}

@@ -31,7 +31,9 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 // Database init
-db.initDb();
+(async () => {
+  await db.initDb();
+})();
 
 const app = express();
 const port = process.env.PORT || 3005;
@@ -76,10 +78,10 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
     };
 
     // Create session in Database
-    const session = db.createSession(sessionId, initial_prompt, intent, calibration);
+    const session = await db.createSession(sessionId, initial_prompt, intent, calibration);
     
     // Save user's initial prompt in messages
-    db.createMessage(sessionId, null, 'user', initial_prompt);
+    await db.createMessage(sessionId, null, 'user', initial_prompt);
 
     // Parse any attached documents
     let extractedText = '';
@@ -103,7 +105,7 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
     const question = await getDiagnosticQuestion(intent, initial_prompt);
     
     // Save diagnostic question in messages
-    db.createMessage(sessionId, null, 'assistant', question);
+    await db.createMessage(sessionId, null, 'assistant', question);
 
     res.json({
       sessionId,
@@ -126,13 +128,13 @@ app.post('/api/sessions/:id/diagnose', async (req: Request, res: Response): Prom
     const sessionId = req.params.id as string;
     const text = req.body.text as string;
     
-    const session = db.getSession(sessionId);
+    const session = await db.getSession(sessionId);
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
     }
 
     // Save user message
-    db.createMessage(sessionId, null, 'user', text);
+    await db.createMessage(sessionId, null, 'user', text);
 
     // Process turn with Diagnosis Agent
     const diagnosisResult = await processDiagnosticTurn(session, text, '');
@@ -147,21 +149,21 @@ app.post('/api/sessions/:id/diagnose', async (req: Request, res: Response): Prom
         session_id: sessionId
       })) as CurriculumNode[];
       
-      db.createNodes(formattedNodes);
-      db.updateSessionStatus(sessionId, 'learning');
+      await db.createNodes(formattedNodes);
+      await db.updateSessionStatus(sessionId, 'learning');
       
       // Save path generation message
       const finalMsg = diagnosisResult.feedback;
-      db.createMessage(sessionId, null, 'assistant', finalMsg);
+      await db.createMessage(sessionId, null, 'assistant', finalMsg);
 
       res.json({
         status: 'learning',
         response: finalMsg,
-        nodes: db.getNodes(sessionId)
+        nodes: await db.getNodes(sessionId)
       });
     } else {
       // Diagnostic continue
-      db.createMessage(sessionId, null, 'assistant', diagnosisResult.feedback);
+      await db.createMessage(sessionId, null, 'assistant', diagnosisResult.feedback);
       res.json({
         status: 'diagnosing',
         response: diagnosisResult.feedback
@@ -180,13 +182,13 @@ app.post('/api/sessions/:id/diagnose', async (req: Request, res: Response): Prom
 app.get('/api/sessions/:id', async (req: Request, res: Response): Promise<any> => {
   try {
     const sessionId = req.params.id as string;
-    const session = db.getSession(sessionId);
+    const session = await db.getSession(sessionId);
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    const messages = db.getMessages(sessionId);
-    const nodes = db.getNodes(sessionId);
+    const messages = await db.getMessages(sessionId);
+    const nodes = await db.getNodes(sessionId);
 
     res.json({
       session,
@@ -206,7 +208,7 @@ app.get('/api/sessions/:id/nodes/:nodeId/chat', async (req: Request, res: Respon
   try {
     const id = req.params.id as string;
     const nodeId = req.params.nodeId as string;
-    const messages = db.getMessages(id, nodeId);
+    const messages = await db.getMessages(id, nodeId);
     res.json(messages);
   } catch (error) {
     console.error('[server] Error fetching node chat:', error);
@@ -221,8 +223,8 @@ app.get('/api/sessions/:id/nodes/:nodeId/teach', async (req: Request, res: Respo
   try {
     const id = req.params.id as string;
     const nodeId = req.params.nodeId as string;
-    const session = db.getSession(id);
-    const nodes = db.getNodes(id);
+    const session = await db.getSession(id);
+    const nodes = await db.getNodes(id);
     const node = nodes.find(n => n.id === nodeId);
     
     if (!session || !node) {
@@ -242,7 +244,7 @@ app.get('/api/sessions/:id/nodes/:nodeId/teach', async (req: Request, res: Respo
     });
 
     // Save full explanation message to the database
-    db.createMessage(id, nodeId, 'assistant', fullText);
+    await db.createMessage(id, nodeId, 'assistant', fullText);
     res.end();
 
   } catch (error) {
@@ -264,8 +266,8 @@ app.post('/api/sessions/:id/nodes/:nodeId/message', async (req: Request, res: Re
       return res.status(400).json({ error: 'Message content is required' });
     }
 
-    const session = db.getSession(id);
-    const nodes = db.getNodes(id);
+    const session = await db.getSession(id);
+    const nodes = await db.getNodes(id);
     const node = nodes.find(n => n.id === nodeId);
 
     if (!session || !node) {
@@ -277,7 +279,7 @@ app.post('/api/sessions/:id/nodes/:nodeId/message', async (req: Request, res: Re
     console.log(`[server] Node message intent classified as: ${messageIntent}`);
 
     // Save user message to database
-    db.createMessage(id, nodeId, 'user', answer);
+    await db.createMessage(id, nodeId, 'user', answer);
 
     if (messageIntent === 'question') {
       // Stream follow-up answer (chunked text)
@@ -285,7 +287,7 @@ app.post('/api/sessions/:id/nodes/:nodeId/message', async (req: Request, res: Re
       res.setHeader('Transfer-Encoding', 'chunked');
 
       let fullText = '';
-      const chatHistory = db.getMessages(id, nodeId);
+      const chatHistory = await db.getMessages(id, nodeId);
       
       await streamFollowUpAnswer(node, session.calibration, chatHistory, (chunk) => {
         fullText += chunk;
@@ -293,7 +295,7 @@ app.post('/api/sessions/:id/nodes/:nodeId/message', async (req: Request, res: Re
       });
 
       // Save assistant answer to database
-      db.createMessage(id, nodeId, 'assistant', fullText);
+      await db.createMessage(id, nodeId, 'assistant', fullText);
       return res.end();
     }
 
@@ -302,14 +304,14 @@ app.post('/api/sessions/:id/nodes/:nodeId/message', async (req: Request, res: Re
     const result = await assessAnswer(node, session.calibration, answer);
 
     // Save assessment feedback
-    db.createMessage(id, nodeId, 'assistant', result.feedback);
+    await db.createMessage(id, nodeId, 'assistant', result.feedback);
 
     let nodesUpdated = false;
     let updatedNodes = nodes;
 
     if (result.passed) {
       // Mark current node as completed
-      db.updateNodeStatus(id, nodeId, 'completed');
+      await db.updateNodeStatus(id, nodeId, 'completed');
       
       // Update session calibration state
       const currentCal = session.calibration;
@@ -327,22 +329,24 @@ app.post('/api/sessions/:id/nodes/:nodeId/message', async (req: Request, res: Re
           ...new Set([...currentCal.known_concepts, ...result.calibration_update.add_known])
         ];
         
-        db.updateSessionCalibration(id, currentCal);
+        await db.updateSessionCalibration(id, currentCal);
       }
 
       // Run deterministic unlocking rules for dependent nodes
-      checkAndUnlockNodes(id);
+      await checkAndUnlockNodes(id);
       
       nodesUpdated = true;
-      updatedNodes = db.getNodes(id);
+      updatedNodes = await db.getNodes(id);
     }
+
+    const updatedSession = await db.getSession(id);
 
     res.json({
       passed: result.passed,
       feedback: result.feedback,
       nodesUpdated,
       nodes: updatedNodes,
-      calibration: db.getSession(id)!.calibration,
+      calibration: updatedSession!.calibration,
       isAssessment: true
     });
 
@@ -360,18 +364,18 @@ app.post('/api/sessions/:id/nodes/:nodeId/assess', (req: Request, res: Response)
  * Deterministic Graph Traversal for Node Unlocking
  * If all dependencies of a locked node are 'completed', mark it as 'available'.
  */
-function checkAndUnlockNodes(sessionId: string): void {
-  const list = db.getNodes(sessionId);
+async function checkAndUnlockNodes(sessionId: string): Promise<void> {
+  const list = await db.getNodes(sessionId);
   const completedIds = list.filter(n => n.status === 'completed').map(n => n.id);
   
-  list.forEach(node => {
+  for (const node of list) {
     if (node.status === 'locked') {
       const allDepsMet = node.dependencies.every(depId => completedIds.includes(depId));
       if (allDepsMet) {
-        db.updateNodeStatus(sessionId, node.id, 'available');
+        await db.updateNodeStatus(sessionId, node.id, 'available');
       }
     }
-  });
+  }
 }
 
 // Start Server

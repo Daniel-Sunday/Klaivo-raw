@@ -14,11 +14,11 @@ async function testSuite() {
   try {
     // 1. Database tests
     console.log('\n[Test 1] Initializing SQLite database...');
-    db.initDb();
+    await db.initDb();
     
     const testSessionId = crypto.randomUUID();
     console.log('[Test 1] Creating test session...');
-    const session = db.createSession(testSessionId, 'WAEC Chemistry Prep', 'exam_prep', {
+    const session = await db.createSession(testSessionId, 'WAEC Chemistry Prep', 'exam_prep', {
       level: 'beginner',
       known_concepts: [],
       weak_points: []
