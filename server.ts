@@ -19,8 +19,13 @@ import { assessAnswer } from './agents/assessmentAgent';
 import { classifyMessageIntent } from './agents/routingAgent';
 import { Calibration, CurriculumNode } from './types';
 
+// Resolve project root (handles running directly from source or compiled dist/ directory)
+const projectRoot = fs.existsSync(path.join(__dirname, 'public'))
+  ? __dirname
+  : path.join(__dirname, '..');
+
 // Initialize directories
-const uploadsDir = path.join(__dirname, 'uploads');
+const uploadsDir = path.join(projectRoot, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -44,7 +49,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(projectRoot, 'public')));
 
 // --- API ROUTES ---
 

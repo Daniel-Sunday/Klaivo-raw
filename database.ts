@@ -1,9 +1,13 @@
 import DatabaseConstructor from 'better-sqlite3';
 import * as path from 'path';
+import * as fs from 'fs';
 import { Session, CurriculumNode, Message, Calibration } from './types';
 
 // Initialize database connection
-const dbPath = path.join(__dirname, 'klaivo.db');
+const projectRoot = fs.existsSync(path.join(__dirname, 'public'))
+  ? __dirname
+  : path.join(__dirname, '..');
+const dbPath = path.join(projectRoot, 'klaivo.db');
 const db = new DatabaseConstructor(dbPath, { verbose: console.log });
 
 // Enable foreign key support
