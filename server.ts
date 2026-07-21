@@ -56,6 +56,19 @@ app.use(express.static(path.join(projectRoot, 'public')));
 // --- API ROUTES ---
 
 /**
+ * Fetch all sessions and learning nodes for left navigation bar history
+ */
+app.get('/api/sessions', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const sessions = await db.getAllSessionsWithNodes();
+    return res.json({ sessions });
+  } catch (err: any) {
+    console.error('Error fetching sessions list:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * Start a new learning session
  */
 app.post('/api/sessions/start', upload.array('documents'), async (req: Request, res: Response): Promise<any> => {

@@ -147,6 +147,46 @@ export async function getSession(id: string): Promise<Session | undefined> {
   }
 }
 
+export async function getAllSessionsWithNodes(): Promise<(Session & { nodes: CurriculumNode[] })[]> {
+  if (supabase) {
+    const { data: sessionsData, error: sErr } = await supabase
+      .from('sessions')
+      .select('*')
+      .order('updated_at', { ascending: false });
+
+    if (sErr || !sessionsData) return [];
+
+    const result: (Session & { nodes: CurriculumNode[] })[] = [];
+    for (const session of sessionsData) {
+      const { data: nodesData } = await supabase
+        .from('nodes')
+        .select('*')
+        .eq('session_id', session.id)
+        .order('order_index', { ascending: true });
+
+      result.push({
+        ...(session as Session),
+        nodes: (nodesData || []) as CurriculumNode[]
+      });
+    }
+    return result;
+  } else {
+    const rawSessions = sqliteDb.prepare('SELECT * FROM sessions ORDER BY updated_at DESC').all() as any[];
+    const result: (Session & { nodes: CurriculumNode[] })[] = [];
+    for (const session of rawSessions) {
+      session.calibration = typeof session.calibration === 'string'
+        ? JSON.parse(session.calibration)
+        : session.calibration;
+      const nodes = await getNodes(session.id);
+      result.push({
+        ...session,
+        nodes
+      });
+    }
+    return result;
+  }
+}
+
 export async function updateSessionStatus(id: string, status: 'diagnosing' | 'learning'): Promise<void> {
   if (supabase) {
     const { error } = await supabase

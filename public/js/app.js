@@ -199,69 +199,307 @@
     let calibration = "Beginner";
     let nodes = [];
     let selectedFiles = [];
-    const landingScreen = document.getElementById("landing-screen");
+    const welcomeScreen = document.getElementById("welcome-screen");
     const workspaceScreen = document.getElementById("workspace-screen");
     const headerStatus = document.getElementById("header-status");
     const headerCalibration = document.getElementById("header-calibration");
     const progressOverlay = document.getElementById("progress-overlay");
     const progressText = document.getElementById("progress-text");
-    const initialPromptTextarea = document.getElementById("initial-prompt");
-    const onboardingFileInput = document.getElementById("onboarding-file-input");
-    const onboardingFilesList = document.getElementById("onboarding-files-list");
-    const startSessionBtn = document.getElementById("start-session-btn");
+    const welcomeInput = document.getElementById("welcome-input");
+    const welcomeSendBtn = document.getElementById("welcome-send-btn");
+    const welcomeFileInput = document.getElementById("welcome-file-input");
+    const welcomeFilesList = document.getElementById("welcome-files-list");
+    const suggestionChips = document.querySelectorAll(".suggestion-chip");
     const chatSidebar = document.getElementById("chat-sidebar");
+    const canvasPanel = document.getElementById("canvas-panel");
     const panelResizer = document.getElementById("panel-resizer");
+    const gutterToggleBtn = document.getElementById("gutter-toggle-btn");
     const toggleSidebarBtn = document.getElementById("toggle-sidebar-btn");
     const expandSidebarBtn = document.getElementById("expand-sidebar-btn");
+    const collapseCanvasBtn = document.getElementById("collapse-canvas-btn");
+    const expandCanvasBtn = document.getElementById("expand-canvas-btn");
     const sidebarNodeTitle = document.getElementById("sidebar-node-title");
     const sidebarNodeStatus = document.getElementById("sidebar-node-status");
     const exitNodeBtn = document.getElementById("exit-node-btn");
     const chatHistory = document.getElementById("chat-history");
     const chatInput = document.getElementById("chat-input");
     const sendChatBtn = document.getElementById("send-chat-btn");
+    const onboardingFileInput = document.getElementById("onboarding-file-input");
+    const onboardingFilesList = document.getElementById("onboarding-files-list");
     const canvasSessionTitle = document.getElementById("canvas-session-title");
     const canvasSessionStats = document.getElementById("canvas-session-stats");
     const canvas = new ConceptCanvas("concept-svg");
-    let isResizing = false;
-    function toggleSidebar(collapsed) {
-      const shouldCollapse = collapsed !== void 0 ? collapsed : !chatSidebar.classList.contains("collapsed");
-      if (shouldCollapse) {
-        chatSidebar.classList.add("collapsed");
-        expandSidebarBtn.classList.remove("hidden");
-        panelResizer.style.display = "none";
-      } else {
-        chatSidebar.classList.remove("collapsed");
-        expandSidebarBtn.classList.add("hidden");
-        panelResizer.style.display = "block";
+    function setupAutoResizeTextarea(textarea) {
+      if (!textarea) return;
+      const adjustHeight = () => {
+        textarea.style.height = "auto";
+        textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
+      };
+      textarea.addEventListener("input", adjustHeight);
+    }
+    setupAutoResizeTextarea(welcomeInput);
+    setupAutoResizeTextarea(chatInput);
+    const appLeftNav = document.getElementById("app-left-nav");
+    const navNewSessionBtn = document.getElementById("nav-new-session-btn");
+    const navSessionsGroup = document.getElementById("nav-sessions-group");
+    const navSessionsHeader = document.getElementById("nav-sessions-header");
+    const navSessionsList = document.getElementById("nav-sessions-list");
+    const navHistoryGroup = document.getElementById("nav-history-group");
+    const navHistoryHeader = document.getElementById("nav-history-header");
+    const navHistoryList = document.getElementById("nav-history-list");
+    const toggleNavBtn = document.getElementById("toggle-nav-btn");
+    const headerSessionTitle = document.getElementById("header-session-title");
+    toggleNavBtn?.addEventListener("click", () => {
+      appLeftNav.classList.toggle("collapsed");
+    });
+    navSessionsHeader?.addEventListener("click", () => {
+      navSessionsGroup.classList.toggle("collapsed");
+    });
+    navHistoryHeader?.addEventListener("click", () => {
+      navHistoryGroup.classList.toggle("collapsed");
+    });
+    navNewSessionBtn?.addEventListener("click", resetToWelcomeScreen);
+    function resetToWelcomeScreen() {
+      sessionId = null;
+      activeNodeId = null;
+      nodes = [];
+      selectedFiles = [];
+      welcomeInput.value = "";
+      welcomeInput.style.height = "auto";
+      welcomeFilesList.innerHTML = "";
+      onboardingFilesList.innerHTML = "";
+      chatHistory.innerHTML = "";
+      headerStatus.classList.add("hidden");
+      headerSessionTitle.textContent = "Klaivo Workspace";
+      workspaceScreen.classList.add("hidden");
+      welcomeScreen.classList.remove("hidden");
+      welcomeInput.focus();
+      loadNavigationHistory();
+    }
+    async function loadNavigationHistory() {
+      try {
+        const res = await fetch("/api/sessions");
+        if (!res.ok) return;
+        const data = await res.json();
+        const sessions = data.sessions || [];
+        navSessionsList.innerHTML = "";
+        if (sessions.length === 0) {
+          navSessionsList.innerHTML = `<div class="nav-item-sub" style="padding: 6px 10px;">No sessions yet</div>`;
+        } else {
+          sessions.forEach((sess) => {
+            const item = document.createElement("div");
+            item.className = `nav-item ${sess.id === sessionId ? "active" : ""}`;
+            item.innerHTML = `
+            <div class="nav-item-title">${sess.title || "Untitled Session"}</div>
+            <div class="nav-item-sub">
+              <span>${sess.nodes ? sess.nodes.length : 0} topics</span>
+              <span>\u2022</span>
+              <span style="text-transform: capitalize;">${sess.calibration?.level || "Beginner"}</span>
+            </div>
+          `;
+            if (sess.nodes && sess.nodes.length > 0) {
+              const tree = document.createElement("div");
+              tree.className = "nav-node-tree";
+              sess.nodes.forEach((n) => {
+                const nodeEl = document.createElement("div");
+                nodeEl.className = `nav-node-item ${sess.id === sessionId && n.id === activeNodeId ? "active" : ""}`;
+                nodeEl.textContent = `${n.status === "completed" ? "\u2713 " : ""}${n.title}`;
+                nodeEl.addEventListener("click", (e) => {
+                  e.stopPropagation();
+                  openSessionAndNode(sess.id, n.id);
+                });
+                tree.appendChild(nodeEl);
+              });
+              item.appendChild(tree);
+            }
+            item.addEventListener("click", () => {
+              openSessionAndNode(sess.id, null);
+            });
+            navSessionsList.appendChild(item);
+          });
+        }
+        navHistoryList.innerHTML = "";
+        const allNodeChats = [];
+        sessions.forEach((sess) => {
+          if (sess.nodes) {
+            sess.nodes.forEach((n) => {
+              if (n.status !== "locked") {
+                allNodeChats.push({ sessionId: sess.id, sessionTitle: sess.title, node: n });
+              }
+            });
+          }
+        });
+        if (allNodeChats.length === 0) {
+          navHistoryList.innerHTML = `<div class="nav-item-sub" style="padding: 6px 10px;">No recent chats</div>`;
+        } else {
+          allNodeChats.slice(0, 20).forEach((chat) => {
+            const item = document.createElement("div");
+            item.className = `nav-item ${chat.sessionId === sessionId && chat.node.id === activeNodeId ? "active" : ""}`;
+            item.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; opacity: 0.7;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+              <div class="nav-item-title">${chat.node.title}</div>
+            </div>
+            <div class="nav-item-sub" style="padding-left: 21px;">${chat.sessionTitle}</div>
+          `;
+            item.addEventListener("click", () => {
+              openSessionAndNode(chat.sessionId, chat.node.id);
+            });
+            navHistoryList.appendChild(item);
+          });
+        }
+      } catch (err) {
+        console.error("Error loading navigation history:", err);
       }
     }
-    toggleSidebarBtn?.addEventListener("click", () => toggleSidebar(true));
-    expandSidebarBtn?.addEventListener("click", () => toggleSidebar(false));
+    async function openSessionAndNode(sessId, nodeId) {
+      try {
+        const res = await fetch(`/api/sessions/${sessId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        sessionId = sessId;
+        calibration = data.session.calibration.level;
+        nodes = data.nodes || [];
+        headerCalibration.textContent = calibration;
+        headerStatus.classList.remove("hidden");
+        canvasSessionTitle.textContent = data.session.title;
+        headerSessionTitle.textContent = data.session.title;
+        canvas.render(nodes);
+        updateStats();
+        enterDiscoveryMode();
+        activateSplitScreen();
+        if (nodeId) {
+          const targetNode = nodes.find((n) => n.id === nodeId);
+          if (targetNode) {
+            activeNodeId = nodeId;
+            sidebarNodeTitle.textContent = targetNode.title;
+            sidebarNodeStatus.textContent = targetNode.status.toUpperCase();
+            sidebarNodeStatus.className = `node-badge ${targetNode.status}`;
+            exitNodeBtn.style.display = "block";
+            document.querySelectorAll(".svg-node-group").forEach((el) => el.classList.remove("active"));
+            document.getElementById(`node-group-${nodeId}`)?.classList.add("active");
+            chatHistory.innerHTML = "";
+            const chatRes = await fetch(`/api/sessions/${sessId}/nodes/${nodeId}/chat`);
+            if (chatRes.ok) {
+              const historyMsgs = await chatRes.json();
+              historyMsgs.forEach((msg) => appendMessage(msg.sender, msg.content, nodeId));
+            }
+          }
+        } else {
+          activeNodeId = null;
+          sidebarNodeTitle.textContent = "Curriculum Diagnostic";
+          sidebarNodeStatus.textContent = "DIAGNOSIS";
+          sidebarNodeStatus.className = "node-badge diagnosis";
+          exitNodeBtn.style.display = "none";
+          chatHistory.innerHTML = "";
+          loadGlobalChat();
+        }
+        loadNavigationHistory();
+      } catch (err) {
+        console.error("Error loading session from nav:", err);
+      }
+    }
+    loadNavigationHistory();
+    function enterDiscoveryMode() {
+      welcomeScreen.classList.add("hidden");
+      workspaceScreen.classList.remove("hidden");
+      workspaceScreen.classList.add("discovery-mode");
+    }
+    function activateSplitScreen() {
+      workspaceScreen.classList.remove("discovery-mode");
+      toggleSidebarBtn.classList.remove("hidden");
+      chatInput.placeholder = "Type your response...";
+    }
+    let currentViewMode = "split";
+    let isResizing = false;
+    function setWorkspaceViewMode(mode) {
+      currentViewMode = mode;
+      chatSidebar.classList.remove("collapsed");
+      canvasPanel.classList.remove("collapsed");
+      workspaceScreen.classList.remove("chat-only-mode");
+      workspaceScreen.classList.remove("canvas-only-mode");
+      expandSidebarBtn.classList.add("hidden");
+      expandCanvasBtn.classList.add("hidden");
+      panelResizer.style.display = "block";
+      if (mode === "canvas-only") {
+        chatSidebar.classList.add("collapsed");
+        workspaceScreen.classList.add("canvas-only-mode");
+        expandSidebarBtn.classList.remove("hidden");
+        panelResizer.style.display = "none";
+      } else if (mode === "chat-only") {
+        canvasPanel.classList.add("collapsed");
+        workspaceScreen.classList.add("chat-only-mode");
+        expandCanvasBtn.classList.remove("hidden");
+        panelResizer.style.display = "none";
+      }
+    }
+    toggleSidebarBtn?.addEventListener("click", () => {
+      setWorkspaceViewMode(currentViewMode === "canvas-only" ? "split" : "canvas-only");
+    });
+    expandSidebarBtn?.addEventListener("click", () => setWorkspaceViewMode("split"));
+    collapseCanvasBtn?.addEventListener("click", () => {
+      setWorkspaceViewMode(currentViewMode === "chat-only" ? "split" : "chat-only");
+    });
+    expandCanvasBtn?.addEventListener("click", () => setWorkspaceViewMode("split"));
+    gutterToggleBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setWorkspaceViewMode(currentViewMode === "canvas-only" ? "split" : "canvas-only");
+    });
     window.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        if (workspaceScreen.classList.contains("discovery-mode")) return;
         e.preventDefault();
-        toggleSidebar();
+        setWorkspaceViewMode(currentViewMode === "split" ? "canvas-only" : "split");
       }
     });
-    panelResizer?.addEventListener("mousedown", (e) => {
+    panelResizer?.addEventListener("dblclick", (e) => {
+      if (e.target.closest(".gutter-toggle-btn")) return;
+      chatSidebar.style.width = "420px";
+      if (currentViewMode === "canvas-only") {
+        setWorkspaceViewMode("split");
+      }
+    });
+    panelResizer?.addEventListener("pointerdown", (e) => {
+      if (e.target.closest(".gutter-toggle-btn")) return;
       isResizing = true;
+      try {
+        panelResizer.setPointerCapture(e.pointerId);
+      } catch (_) {
+      }
       panelResizer.classList.add("resizing");
+      chatSidebar.classList.add("resizing");
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
     });
-    window.addEventListener("mousemove", (e) => {
+    panelResizer?.addEventListener("pointermove", (e) => {
       if (!isResizing) return;
-      const newWidth = Math.max(280, Math.min(e.clientX, window.innerWidth * 0.7));
-      chatSidebar.style.width = `${newWidth}px`;
+      const snapThreshold = 180;
+      const maxWidth = Math.min(window.innerWidth - 300, window.innerWidth * 0.75);
+      if (e.clientX < snapThreshold) {
+        setWorkspaceViewMode("canvas-only");
+      } else {
+        if (currentViewMode === "canvas-only") {
+          setWorkspaceViewMode("split");
+        }
+        const newWidth = Math.min(e.clientX, maxWidth);
+        chatSidebar.style.width = `${newWidth}px`;
+      }
     });
-    window.addEventListener("mouseup", () => {
+    const stopPointerResizing = (e) => {
       if (isResizing) {
         isResizing = false;
+        try {
+          panelResizer.releasePointerCapture(e.pointerId);
+        } catch (_) {
+        }
         panelResizer.classList.remove("resizing");
+        chatSidebar.classList.remove("resizing");
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
       }
-    });
+    };
+    panelResizer?.addEventListener("pointerup", stopPointerResizing);
+    panelResizer?.addEventListener("pointercancel", stopPointerResizing);
     function showLoader(text) {
       progressText.textContent = text;
       progressOverlay.classList.remove("hidden");
@@ -271,9 +509,19 @@
     }
     function formatMarkdown(text) {
       if (!text) return "";
-      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/\*(.*?)\*/g, "<em>$1</em>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\n/g, "<br>");
+      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/\*(.*?)\*/g, "<em>$1</em>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\[blur\](.*?)\[\/blur\]/gi, '<span class="active-recall-blur" title="Click or hover to reveal term" role="button" tabindex="0">$1</span>').replace(/\[\[(.*?)\]\]/g, '<span class="active-recall-blur" title="Click or hover to reveal term" role="button" tabindex="0">$1</span>').replace(/\[(\d+)\]/g, '<span class="citation-chip" title="Citation Source [$1]">$1</span>').replace(/\n/g, "<br>");
     }
+    chatHistory?.addEventListener("click", (e) => {
+      const target = e.target;
+      if (target && target.classList.contains("active-recall-blur")) {
+        target.classList.toggle("revealed");
+      }
+    });
     function renderMessageBubble(bubble, content) {
+      if (content.includes("thinking-dots")) {
+        bubble.innerHTML = content;
+        return;
+      }
       if (content.includes("ASSESSMENT QUESTION:") || content.includes("CHECK YOUR UNDERSTANDING:")) {
         const parts = content.split(/(ASSESSMENT QUESTION:|CHECK YOUR UNDERSTANDING:)/i);
         const mainText = parts[0];
@@ -302,6 +550,78 @@
       chatHistory.scrollTop = chatHistory.scrollHeight;
       return wrapper;
     }
+    welcomeFileInput.addEventListener("change", (e) => {
+      const files = Array.from(e.target.files || []);
+      files.forEach((file) => {
+        if (selectedFiles.some((f) => f.name === file.name)) return;
+        selectedFiles.push(file);
+        const tag = document.createElement("div");
+        tag.className = "uploaded-file-tag";
+        tag.innerHTML = `\u{1F4C4} ${file.name.substring(0, 20)}${file.name.length > 20 ? "\u2026" : ""} <span class="remove-file-btn" data-name="${file.name}">\xD7</span>`;
+        welcomeFilesList.appendChild(tag);
+      });
+      welcomeFileInput.value = "";
+    });
+    welcomeFilesList.addEventListener("click", (e) => {
+      const target = e.target;
+      if (target.classList.contains("remove-file-btn")) {
+        selectedFiles = selectedFiles.filter((f) => f.name !== target.dataset.name);
+        target.parentElement?.remove();
+      }
+    });
+    suggestionChips.forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const prompt = chip.dataset.prompt || chip.textContent?.trim() || "";
+        welcomeInput.value = prompt;
+        welcomeInput.focus();
+      });
+    });
+    welcomeInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        startSession();
+      }
+    });
+    welcomeSendBtn.addEventListener("click", startSession);
+    async function startSession() {
+      const prompt = welcomeInput.value.trim();
+      if (!prompt) {
+        welcomeInput.focus();
+        return;
+      }
+      enterDiscoveryMode();
+      appendMessage("user", prompt);
+      const thinkingWrapper = appendMessage("assistant", '<div class="thinking-dots"><span></span><span></span><span></span></div>');
+      try {
+        const formData = new FormData();
+        formData.append("initial_prompt", prompt);
+        selectedFiles.forEach((file) => formData.append("documents", file));
+        const response = await fetch("/api/sessions/start", { method: "POST", body: formData });
+        if (!response.ok) throw new Error("Failed to start session");
+        const data = await response.json();
+        sessionId = data.sessionId;
+        calibration = data.calibration.level;
+        thinkingWrapper.remove();
+        headerCalibration.textContent = calibration;
+        headerStatus.classList.remove("hidden");
+        canvasSessionTitle.textContent = prompt;
+        appendMessage("assistant", data.diagnosticQuestion);
+        if (data.nodes && data.nodes.length > 0) {
+          nodes = data.nodes;
+          canvas.render(nodes);
+          updateStats();
+          activateSplitScreen();
+          appendMessage("assistant", "\u{1F389} Your personalized learning tree has been built! Click on the first unlocked node on the right to start learning.");
+        }
+        selectedFiles = [];
+        welcomeFilesList.innerHTML = "";
+        loadNavigationHistory();
+      } catch (err) {
+        console.error(err);
+        thinkingWrapper.remove();
+        appendMessage("assistant", `Something went wrong starting your session: ${err.message}`);
+      }
+    }
     onboardingFileInput.addEventListener("change", (e) => {
       const files = Array.from(e.target.files || []);
       files.forEach((file) => {
@@ -309,7 +629,7 @@
         selectedFiles.push(file);
         const tag = document.createElement("div");
         tag.className = "uploaded-file-tag";
-        tag.innerHTML = `\u{1F4C4} ${file.name.substring(0, 15)}... <span class="remove-file-btn" data-name="${file.name}">\xD7</span>`;
+        tag.innerHTML = `\u{1F4C4} ${file.name.substring(0, 20)}${file.name.length > 20 ? "\u2026" : ""} <span class="remove-file-btn" data-name="${file.name}">\xD7</span>`;
         onboardingFilesList.appendChild(tag);
       });
       onboardingFileInput.value = "";
@@ -317,49 +637,8 @@
     onboardingFilesList.addEventListener("click", (e) => {
       const target = e.target;
       if (target.classList.contains("remove-file-btn")) {
-        const fileName = target.dataset.name;
-        selectedFiles = selectedFiles.filter((f) => f.name !== fileName);
+        selectedFiles = selectedFiles.filter((f) => f.name !== target.dataset.name);
         target.parentElement?.remove();
-      }
-    });
-    startSessionBtn.addEventListener("click", async () => {
-      const prompt = initialPromptTextarea.value.trim();
-      if (!prompt) {
-        alert("Please enter what you want to learn first!");
-        return;
-      }
-      showLoader("Starting your learning session...");
-      try {
-        const formData = new FormData();
-        formData.append("initial_prompt", prompt);
-        selectedFiles.forEach((file) => {
-          formData.append("documents", file);
-        });
-        const response = await fetch("/api/sessions/start", {
-          method: "POST",
-          body: formData
-        });
-        if (!response.ok) throw new Error("Failed to start session");
-        const data = await response.json();
-        sessionId = data.sessionId;
-        calibration = data.calibration.level;
-        headerCalibration.textContent = calibration;
-        headerStatus.classList.remove("hidden");
-        canvasSessionTitle.textContent = prompt;
-        landingScreen.classList.add("hidden");
-        workspaceScreen.classList.remove("hidden");
-        chatHistory.innerHTML = "";
-        appendMessage("assistant", data.diagnosticQuestion);
-        if (data.nodes && data.nodes.length > 0) {
-          nodes = data.nodes;
-          canvas.render(nodes);
-          updateStats();
-        }
-      } catch (err) {
-        console.error(err);
-        alert("Error initializing session: " + err.message);
-      } finally {
-        hideLoader();
       }
     });
     canvas.onNodeClick(async (node) => {
@@ -372,47 +651,37 @@
       sidebarNodeStatus.className = `node-badge ${node.status}`;
       exitNodeBtn.style.display = "block";
       chatHistory.innerHTML = "";
-      showLoader(`Opening node: ${node.title}...`);
+      const thinkingWrapper = appendMessage("assistant", '<div class="thinking-dots"><span></span><span></span><span></span></div>', node.id);
       try {
         const chatResponse = await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/chat`);
         if (chatResponse.ok) {
           const history = await chatResponse.json();
           if (history.length > 0) {
-            history.forEach((msg) => {
-              appendMessage(msg.sender, msg.content, node.id);
-            });
-            hideLoader();
+            thinkingWrapper.remove();
+            history.forEach((msg) => appendMessage(msg.sender, msg.content, node.id));
             return;
           }
         }
-        appendMessage("assistant", `Loading explanation for **${node.title}**...`);
-        hideLoader();
         const streamUrl = `/api/sessions/${sessionId}/nodes/${node.id}/teach`;
         const response = await fetch(streamUrl);
         if (!response.ok) throw new Error("Teaching agent failed");
         const reader = response.body?.getReader();
         if (!reader) throw new Error("Response body reader not available");
         const decoder = new TextDecoder("utf-8");
-        let currentMsgWrapper = null;
+        let currentMsgWrapper = thinkingWrapper;
         let streamedContent = "";
-        chatHistory.lastElementChild?.remove();
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           const chunk = decoder.decode(value, { stream: true });
           streamedContent += chunk;
-          if (!currentMsgWrapper) {
-            currentMsgWrapper = appendMessage("assistant", streamedContent, node.id);
-          } else {
-            renderMessageBubble(currentMsgWrapper.querySelector(".message-bubble"), streamedContent);
-            chatHistory.scrollTop = chatHistory.scrollHeight;
-          }
+          renderMessageBubble(currentMsgWrapper.querySelector(".message-bubble"), streamedContent);
+          chatHistory.scrollTop = chatHistory.scrollHeight;
         }
       } catch (err) {
         console.error(err);
-        appendMessage("assistant", `Failed to load learning content. Please try clicking the node again.`);
-      } finally {
-        hideLoader();
+        thinkingWrapper.remove();
+        appendMessage("assistant", "Failed to load learning content. Please try clicking the node again.");
       }
     });
     exitNodeBtn.addEventListener("click", () => {
@@ -431,9 +700,7 @@
           const data = await response.json();
           if (data.messages && data.messages.length > 0) {
             data.messages.forEach((msg) => {
-              if (!msg.node_id) {
-                appendMessage(msg.sender, msg.content);
-              }
+              if (!msg.node_id) appendMessage(msg.sender, msg.content);
             });
           }
         }
@@ -443,14 +710,18 @@
     }
     sendChatBtn.addEventListener("click", sendMessage);
     chatInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") sendMessage();
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
     });
     async function sendMessage() {
       const text = chatInput.value.trim();
       if (!text) return;
       chatInput.value = "";
+      chatInput.style.height = "auto";
       appendMessage("user", text, activeNodeId);
-      showLoader("Klaivo is thinking...");
+      const thinkingWrapper = appendMessage("assistant", '<div class="thinking-dots"><span></span><span></span><span></span></div>', activeNodeId);
       try {
         if (activeNodeId) {
           const response = await fetch(`/api/sessions/${sessionId}/nodes/${activeNodeId}/message`, {
@@ -462,7 +733,7 @@
           const contentType = response.headers.get("content-type");
           if (contentType && contentType.includes("application/json")) {
             const data = await response.json();
-            hideLoader();
+            thinkingWrapper.remove();
             appendMessage("assistant", data.feedback, activeNodeId);
             if (data.nodesUpdated) {
               nodes = data.nodes;
@@ -474,23 +745,16 @@
               headerCalibration.textContent = calibration;
             }
           } else {
-            hideLoader();
             const reader = response.body?.getReader();
             if (!reader) throw new Error("Response body reader not available");
             const decoder = new TextDecoder("utf-8");
-            let currentMsgWrapper = null;
             let streamedContent = "";
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
-              const chunk = decoder.decode(value, { stream: true });
-              streamedContent += chunk;
-              if (!currentMsgWrapper) {
-                currentMsgWrapper = appendMessage("assistant", streamedContent, activeNodeId);
-              } else {
-                renderMessageBubble(currentMsgWrapper.querySelector(".message-bubble"), streamedContent);
-                chatHistory.scrollTop = chatHistory.scrollHeight;
-              }
+              streamedContent += decoder.decode(value, { stream: true });
+              renderMessageBubble(thinkingWrapper.querySelector(".message-bubble"), streamedContent);
+              chatHistory.scrollTop = chatHistory.scrollHeight;
             }
           }
         } else {
@@ -501,25 +765,37 @@
           });
           if (!response.ok) throw new Error("Diagnosis message failed");
           const data = await response.json();
+          thinkingWrapper.remove();
           appendMessage("assistant", data.response);
           if (data.status === "learning" || data.nodes && data.nodes.length > 0) {
             nodes = data.nodes;
             canvas.render(nodes);
             updateStats();
-            appendMessage("assistant", "\u{1F389} Your personalized learning tree has been built! Click on the first unlocked node (marked in blue) on the right to start learning.");
+            activateSplitScreen();
+            appendMessage("assistant", "\u{1F389} Your personalized learning tree has been built! Click on the first unlocked node on the right to start learning.");
           }
         }
       } catch (err) {
         console.error(err);
-        appendMessage("assistant", `Sorry, something went wrong processing that request: ${err.message}`);
-      } finally {
-        hideLoader();
+        thinkingWrapper.remove();
+        appendMessage("assistant", `Sorry, something went wrong: ${err.message}`);
       }
     }
     function updateStats() {
       const completedCount = nodes.filter((n) => n.status === "completed").length;
-      const totalCount = nodes.length;
-      canvasSessionStats.textContent = `${completedCount} of ${totalCount} Nodes Completed`;
+      canvasSessionStats.textContent = `${completedCount} of ${nodes.length} Nodes Completed`;
+      const masteryPath = document.getElementById("header-mastery-progress-path");
+      const masteryText = document.getElementById("header-mastery-text");
+      const masteryWrapper = document.querySelector(".mastery-ring-wrapper");
+      if (!nodes || nodes.length === 0) {
+        if (masteryPath) masteryPath.setAttribute("stroke-dasharray", "0, 100");
+        if (masteryText) masteryText.textContent = "0%";
+        return;
+      }
+      const percent = Math.round(completedCount / nodes.length * 100);
+      if (masteryPath) masteryPath.setAttribute("stroke-dasharray", `${percent}, 100`);
+      if (masteryText) masteryText.textContent = `${percent}%`;
+      if (masteryWrapper) masteryWrapper.setAttribute("aria-label", `Mastery Rate ${percent}%`);
     }
   });
 })();
