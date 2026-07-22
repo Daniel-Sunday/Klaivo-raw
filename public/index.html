@@ -12,55 +12,63 @@
 </head>
 <body>
   <div id="app" class="app-layout">
-    <!-- Perplexity-Style Left Navigation Sidebar (~200px) -->
+    <!-- Perplexity-Style Left Navigation Sidebar (200px) -->
     <nav class="app-left-nav" id="app-left-nav">
-      <!-- Top Brand Logo -->
+      <!-- Top Brand Logo & Toggle Button -->
       <div class="nav-logo-section">
-        <div class="logo-icon-wrapper">
-          <span class="logo-mark">K</span>
+        <div class="logo-left-cluster">
+          <div class="logo-icon-wrapper">
+            <span class="logo-mark">K</span>
+          </div>
+          <div class="logo-text-wrapper">
+            <span class="logo-title">Klaivo</span>
+          </div>
         </div>
-        <div class="logo-text-wrapper">
-          <span class="logo-title">Klaivo</span>
-          <span class="logo-badge" title="Adaptive Learning Workspace">Adaptive</span>
-        </div>
+        <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" title="Toggle Navigation Sidebar" aria-label="Toggle Navigation Sidebar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <line x1="9" y1="3" x2="9" y2="21"/>
+          </svg>
+        </button>
       </div>
 
-      <!-- New Session Button (Constitution Spatial Scale) -->
+      <!-- New Session Button (Perplexity Style: + New ^I) -->
       <button class="nav-new-session-btn" id="nav-new-session-btn" title="Start a New Learning Session" aria-label="Start a New Learning Session">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="12" y1="5" x2="12" y2="19"></line>
-          <line x1="5" y1="12" x2="19" y2="12"></line>
-        </svg>
-        <span>New Session</span>
+        <div class="nav-new-btn-left">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          <span>New</span>
+        </div>
+        <span class="nav-shortcut-badge">^I</span>
       </button>
 
       <!-- Scrollable Navigation Sections -->
       <div class="nav-scroll-area">
-        <!-- Sessions Section (Expandable/Collapsible Tree of Learning Maps) -->
+        <!-- Session Section (Sentence Case: Session) -->
         <div class="nav-section" id="nav-sessions-group">
-          <div class="nav-section-header" id="nav-sessions-header" title="Toggle Sessions" tabindex="0" role="button" aria-expanded="true">
+          <div class="nav-section-header" id="nav-sessions-header" title="Session">
             <div class="nav-section-title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-              <span>Sessions</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+              <span>Session</span>
             </div>
-            <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
           </div>
           <div class="nav-section-body" id="nav-sessions-list">
-            <!-- Dynamic session items -->
+            <!-- Dynamic session items (overall titles without icons) -->
           </div>
         </div>
 
-        <!-- History Section (Chronological Individual Node Chats across all Sessions) -->
+        <!-- History Section (Sentence Case: History) -->
         <div class="nav-section" id="nav-history-group">
-          <div class="nav-section-header" id="nav-history-header" title="Toggle History" tabindex="0" role="button" aria-expanded="true">
+          <div class="nav-section-header" id="nav-history-header" title="History">
             <div class="nav-section-title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"></path></svg>
               <span>History</span>
             </div>
-            <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
           </div>
           <div class="nav-section-body" id="nav-history-list">
-            <!-- Dynamic history node chats -->
+            <!-- Dynamic history items (without icons) -->
           </div>
         </div>
       </div>
@@ -69,35 +77,7 @@
     <!-- Main Workspace Container -->
     <div class="main-content-wrapper">
       <!-- Main App Header -->
-      <header class="app-header">
-        <div class="header-left">
-          <button class="icon-toggle-btn nav-collapse-toggle" id="toggle-nav-btn" title="Toggle Navigation Sidebar" aria-label="Toggle Navigation Sidebar">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="3" y1="12" x2="21" y2="12"></line>
-              <line x1="3" y1="6" x2="21" y2="6"></line>
-              <line x1="3" y1="18" x2="21" y2="18"></line>
-            </svg>
-          </button>
-          <div class="header-session-title" id="header-session-title">Klaivo Learning Workspace</div>
-        </div>
-        
-        <div class="header-status" id="header-status">
-          <!-- Mastery Progress Ring Component (Constitution Section 7.2) -->
-          <div class="mastery-ring-wrapper" title="Concept Mastery Retention Rate" aria-label="Mastery Rate 0%">
-            <svg width="34" height="34" viewBox="0 0 36 36" class="mastery-ring-svg">
-              <path class="ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="3.5"/>
-              <path class="ring-progress" id="header-mastery-progress-path" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#10b981" stroke-width="3.5" stroke-linecap="round"/>
-              <text x="18" y="21" class="ring-text" text-anchor="middle" fill="#f8fafc" font-size="10" font-weight="700" id="header-mastery-text">0%</text>
-            </svg>
-            <span class="mastery-ring-label">Mastery</span>
-          </div>
-
-          <div class="calibration-badge" id="calibration-badge-container">
-            <span>Stage:</span>
-            <span class="calibration-level" id="header-calibration">Diagnostic</span>
-          </div>
-        </div>
-      </header>
+      <header class="app-header"></header>
 
     <div class="screen-wrapper">
 
@@ -107,8 +87,7 @@
       <section class="screen" id="welcome-screen">
         <div class="welcome-content">
           <div class="welcome-hero">
-            <h1 class="welcome-title">What do you want to<br><span>master today?</span></h1>
-            <p class="welcome-subtitle">Describe your learning goal, exam syllabus, or topic. Klaivo constructs an adaptive path and scaffolds active recall exercises.</p>
+            <h1 class="welcome-title" id="welcome-greeting-title">Good afternoon</h1>
           </div>
 
           <div class="welcome-input-card">
@@ -122,22 +101,20 @@
                 placeholder="Describe your learning goal, topic, or exam syllabus..."
                 rows="2"
                 autocomplete="off"
-                aria-label="Describe your learning goal or topic"
+                aria-label="Describe your learning goal, topic, or exam syllabus"
               ></textarea>
             </div>
 
             <!-- Integrated Composer Toolbar -->
             <div class="welcome-composer-toolbar">
               <div class="toolbar-left-cluster">
-                <label class="welcome-attach-btn" title="Upload Syllabus / Notes (PDF/Text)" aria-label="Attach notes or syllabus file">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-                  <span>Attach Syllabus/Notes</span>
-                  <input type="file" id="welcome-file-input" accept=".pdf,.txt" multiple style="display:none;">
-                </label>
-                <div class="focus-pill" title="Adaptive Learning Scaffolding Active">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m12 8 4 4-4 4M8 12h8"/></svg>
-                  <span>Adaptive Mode</span>
-                </div>
+                <button type="button" class="welcome-attach-icon-btn" id="welcome-attach-btn" title="Attach notes or syllabus file (PDF/Text)" aria-label="Attach notes or syllabus file">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                </button>
+                <input type="file" id="welcome-file-input" accept=".pdf,.txt" multiple style="display:none;">
               </div>
 
               <div class="toolbar-right-cluster">

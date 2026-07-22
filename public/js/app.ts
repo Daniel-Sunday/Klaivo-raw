@@ -73,10 +73,16 @@ document.addEventListener('DOMContentLoaded', () => {
   setupAutoResizeTextarea(welcomeInput);
   setupAutoResizeTextarea(chatInput);
 
+  const welcomeAttachBtn  = document.getElementById('welcome-attach-btn') as HTMLButtonElement;
+  welcomeAttachBtn?.addEventListener('click', () => {
+    welcomeFileInput.click();
+  });
+
   // ══════════════════════════════════════════════════
-  // STAGE 0 — Left Navigation Bar (Perplexity style)
+  // STAGE 0 — Left Navigation Bar & Greetings
   // ══════════════════════════════════════════════════
   const appLeftNav          = document.getElementById('app-left-nav') as HTMLElement;
+  const sidebarToggleBtn    = document.getElementById('sidebar-toggle-btn') as HTMLButtonElement;
   const navNewSessionBtn    = document.getElementById('nav-new-session-btn') as HTMLButtonElement;
   const navSessionsGroup    = document.getElementById('nav-sessions-group') as HTMLElement;
   const navSessionsHeader   = document.getElementById('nav-sessions-header') as HTMLElement;
@@ -84,13 +90,39 @@ document.addEventListener('DOMContentLoaded', () => {
   const navHistoryGroup     = document.getElementById('nav-history-group') as HTMLElement;
   const navHistoryHeader    = document.getElementById('nav-history-header') as HTMLElement;
   const navHistoryList      = document.getElementById('nav-history-list') as HTMLElement;
-  const toggleNavBtn        = document.getElementById('toggle-nav-btn') as HTMLButtonElement;
-  const headerSessionTitle  = document.getElementById('header-session-title') as HTMLElement;
+
+  const navLogoSection      = document.querySelector('.nav-logo-section') as HTMLElement;
 
   // Toggle Left Navigation Bar
-  toggleNavBtn?.addEventListener('click', () => {
+  sidebarToggleBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
     appLeftNav.classList.toggle('collapsed');
   });
+
+  navLogoSection?.addEventListener('click', () => {
+    if (appLeftNav.classList.contains('collapsed')) {
+      appLeftNav.classList.remove('collapsed');
+    }
+  });
+
+  // Dynamic Single-Line Time-of-Day Greeting Generator
+  function updateTimeOfDayGreeting(): void {
+    const greetingTitle = document.getElementById('welcome-greeting-title');
+    if (!greetingTitle) return;
+    const hour = new Date().getHours();
+    let timeGreeting = 'Good afternoon';
+    if (hour >= 5 && hour < 12) {
+      timeGreeting = 'Good morning';
+    } else if (hour >= 12 && hour < 17) {
+      timeGreeting = 'Good afternoon';
+    } else {
+      timeGreeting = 'Good evening';
+    }
+    greetingTitle.textContent = timeGreeting;
+  }
+
+  // Initialize greeting on startup
+  updateTimeOfDayGreeting();
 
   // Collapsible section toggles
   navSessionsHeader?.addEventListener('click', () => {
@@ -114,13 +146,33 @@ document.addEventListener('DOMContentLoaded', () => {
     welcomeFilesList.innerHTML = '';
     onboardingFilesList.innerHTML = '';
     chatHistory.innerHTML = '';
-    headerStatus.classList.add('hidden');
-    headerSessionTitle.textContent = 'Klaivo Workspace';
+    if (headerStatus) headerStatus.classList.add('hidden');
 
     workspaceScreen.classList.add('hidden');
     welcomeScreen.classList.remove('hidden');
+    updateTimeOfDayGreeting();
     welcomeInput.focus();
     loadNavigationHistory();
+  }
+
+  /** Helper to format strings into clean Sentence case */
+  function toSentenceCase(str: string): string {
+    if (!str) return '';
+    const trimmed = str.trim();
+    if (trimmed.length === 0) return '';
+    const words = trimmed.split(/\s+/);
+    return words.map((word, i) => {
+      // Preserve uppercase acronyms like WAEC, AWS, AI, PDF, API, SQL, CSS, etc.
+      if (/^[A-Z0-9]{2,5}$/.test(word)) return word;
+      // Preserve tech names
+      if (/^(Python|JavaScript|TypeScript|React|Next|Node|C\+\+|SQL|HTML|CSS|SQLite|Postgres)$/i.test(word)) {
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      }
+      if (i === 0) {
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      }
+      return word.toLowerCase();
+    }).join(' ');
   }
 
   // Fetch & Render Navigation History from backend
@@ -131,49 +183,24 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await res.json();
       const sessions = data.sessions || [];
 
-      // 1. Render Sessions section (Tree/Map sessions)
+      // 1. Render Session section (Overall learning sessions: a, a, a - no icons on items)
       navSessionsList.innerHTML = '';
       if (sessions.length === 0) {
-        navSessionsList.innerHTML = `<div class="nav-item-sub" style="padding: 6px 10px;">No sessions yet</div>`;
+        navSessionsList.innerHTML = `<div class="nav-item-sub" style="padding: 6px 8px;">No sessions yet</div>`;
       } else {
         sessions.forEach((sess: any) => {
           const item = document.createElement('div');
-          item.className = `nav-item ${sess.id === sessionId ? 'active' : ''}`;
-          item.innerHTML = `
-            <div class="nav-item-title">${sess.title || 'Untitled Session'}</div>
-            <div class="nav-item-sub">
-              <span>${sess.nodes ? sess.nodes.length : 0} topics</span>
-              <span>•</span>
-              <span style="text-transform: capitalize;">${sess.calibration?.level || 'Beginner'}</span>
-            </div>
-          `;
-
-          // Expandable node topic chats inside session
-          if (sess.nodes && sess.nodes.length > 0) {
-            const tree = document.createElement('div');
-            tree.className = 'nav-node-tree';
-            sess.nodes.forEach((n: CurriculumNode) => {
-              const nodeEl = document.createElement('div');
-              nodeEl.className = `nav-node-item ${sess.id === sessionId && n.id === activeNodeId ? 'active' : ''}`;
-              nodeEl.textContent = `${n.status === 'completed' ? '✓ ' : ''}${n.title}`;
-              nodeEl.addEventListener('click', (e) => {
-                e.stopPropagation();
-                openSessionAndNode(sess.id, n.id);
-              });
-              tree.appendChild(nodeEl);
-            });
-            item.appendChild(tree);
-          }
-
+          item.className = `nav-item ${sess.id === sessionId && !activeNodeId ? 'active' : ''}`;
+          const displayTitle = toSentenceCase(sess.title || 'Untitled session');
+          item.innerHTML = `<div class="nav-item-title">${displayTitle}</div>`;
           item.addEventListener('click', () => {
             openSessionAndNode(sess.id, null);
           });
-
           navSessionsList.appendChild(item);
         });
       }
 
-      // 2. Render History section (Chronological node chats across all sessions, shown by default)
+      // 2. Render History section (Chronological node chats: b, b, b - no icons on items)
       navHistoryList.innerHTML = '';
       const allNodeChats: Array<{ sessionId: string; sessionTitle: string; node: CurriculumNode }> = [];
       sessions.forEach((sess: any) => {
@@ -187,18 +214,13 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       if (allNodeChats.length === 0) {
-        navHistoryList.innerHTML = `<div class="nav-item-sub" style="padding: 6px 10px;">No recent chats</div>`;
+        navHistoryList.innerHTML = `<div class="nav-item-sub" style="padding: 6px 8px;">No recent chats</div>`;
       } else {
         allNodeChats.slice(0, 20).forEach(chat => {
           const item = document.createElement('div');
           item.className = `nav-item ${chat.sessionId === sessionId && chat.node.id === activeNodeId ? 'active' : ''}`;
-          item.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; opacity: 0.7;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-              <div class="nav-item-title">${chat.node.title}</div>
-            </div>
-            <div class="nav-item-sub" style="padding-left: 21px;">${chat.sessionTitle}</div>
-          `;
+          const nodeTitle = toSentenceCase(chat.node.title);
+          item.innerHTML = `<div class="nav-item-title">${nodeTitle}</div>`;
           item.addEventListener('click', () => {
             openSessionAndNode(chat.sessionId, chat.node.id);
           });
@@ -221,10 +243,9 @@ document.addEventListener('DOMContentLoaded', () => {
       calibration = data.session.calibration.level;
       nodes = data.nodes || [];
 
-      headerCalibration.textContent = calibration;
-      headerStatus.classList.remove('hidden');
-      canvasSessionTitle.textContent = data.session.title;
-      headerSessionTitle.textContent = data.session.title;
+      if (headerCalibration) headerCalibration.textContent = calibration;
+      if (headerStatus) headerStatus.classList.remove('hidden');
+      if (canvasSessionTitle) canvasSessionTitle.textContent = toSentenceCase(data.session.title);
 
       canvas.render(nodes);
       updateStats();
@@ -236,7 +257,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const targetNode = nodes.find(n => n.id === nodeId);
         if (targetNode) {
           activeNodeId = nodeId;
-          sidebarNodeTitle.textContent = targetNode.title;
+          sidebarNodeTitle.textContent = toSentenceCase(targetNode.title);
           sidebarNodeStatus.textContent = targetNode.status.toUpperCase();
           sidebarNodeStatus.className = `node-badge ${targetNode.status}`;
           exitNodeBtn.style.display = 'block';

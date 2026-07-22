@@ -84,6 +84,29 @@ export async function initDb(): Promise<void> {
       )
     `);
     console.log('[Database] SQLite tables initialized.');
+
+    // Preload default learning sessions & history if database is empty
+    const count = sqliteDb.prepare('SELECT COUNT(*) as cnt FROM sessions').get() as { cnt: number };
+    if (count.cnt === 0) {
+      const seed1 = 'seed-waec-chem';
+      const seed2 = 'seed-calculus';
+      const seed3 = 'seed-python';
+
+      const cal = JSON.stringify({ level: 'beginner', known_concepts: [], weak_points: [] });
+      sqliteDb.prepare('INSERT INTO sessions (id, title, intent, status, calibration) VALUES (?, ?, ?, ?, ?)').run(seed1, 'Prepare me for WAEC Chemistry — Organic Chemistry section', 'learning', 'learning', cal);
+      sqliteDb.prepare('INSERT INTO sessions (id, title, intent, status, calibration) VALUES (?, ?, ?, ?, ?)').run(seed2, 'Help me understand Calculus — differentiation and integration', 'learning', 'learning', cal);
+      sqliteDb.prepare('INSERT INTO sessions (id, title, intent, status, calibration) VALUES (?, ?, ?, ?, ?)').run(seed3, 'Teach me Python programming from scratch', 'learning', 'learning', cal);
+
+      sqliteDb.prepare('INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('node-1', seed1, 'Intro & Hybridization', 'Carbon hybridization and orbital geometry', 100, 100, '[]', 'completed', 0);
+      sqliteDb.prepare('INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('node-2', seed1, 'IUPAC Nomenclature', 'Naming alkanes, alkenes, and functional groups', 250, 100, '["node-1"]', 'active', 1);
+
+      sqliteDb.prepare('INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('node-3', seed2, 'Derivatives & Limits', 'Fundamental rate of change', 100, 100, '[]', 'completed', 0);
+      sqliteDb.prepare('INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('node-4', seed2, 'Integration Techniques', 'Definite and indefinite integrals', 250, 100, '["node-3"]', 'active', 1);
+
+      sqliteDb.prepare('INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('node-5', seed3, 'Python Basics & Control Flow', 'Variables, loops, and conditions', 100, 100, '[]', 'completed', 0);
+
+      console.log('[Database] Preloaded initial learning sessions and history.');
+    }
   }
 }
 
