@@ -201,7 +201,35 @@ app.get('/api/sessions/:id', async (req: Request, res: Response): Promise<any> =
     }
 
     const messages = await db.getMessages(sessionId);
-    const nodes = await db.getNodes(sessionId);
+    let nodes = await db.getNodes(sessionId);
+
+    // If session has no nodes yet, generate curriculum nodes so canvas is never blank
+    if (!nodes || nodes.length === 0) {
+      try {
+        let parsedCalibration: Calibration = { level: 'beginner', known_concepts: [], weak_points: [] };
+        if (session.calibration) {
+          try {
+            parsedCalibration = typeof session.calibration === 'string' ? JSON.parse(session.calibration) : session.calibration;
+          } catch (_) {}
+        }
+
+        const summary = {
+          userGoal: session.title,
+          intent: session.intent || 'learning',
+          extractedContext: '',
+          calibration: parsedCalibration
+        };
+        const generated = await generateCurriculum(summary);
+        const formattedNodes: CurriculumNode[] = generated.map(node => ({
+          ...node,
+          session_id: sessionId
+        })) as CurriculumNode[];
+        await db.createNodes(formattedNodes);
+        nodes = await db.getNodes(sessionId);
+      } catch (err) {
+        console.warn('[server] Non-blocking error lazy-building nodes:', err);
+      }
+    }
 
     res.json({
       session,
@@ -210,6 +238,67 @@ app.get('/api/sessions/:id', async (req: Request, res: Response): Promise<any> =
     });
   } catch (error) {
     console.error('[server] Error fetching session:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+/**
+ * Delete session
+ */
+app.delete('/api/sessions/:id', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const sessionId = req.params.id as string;
+    await db.deleteSession(sessionId);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[server] Error deleting session:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+/**
+ * Rename session title
+ */
+app.patch('/api/sessions/:id', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const sessionId = req.params.id as string;
+    const { title } = req.body;
+    if (!title) return res.status(400).json({ error: 'Title is required' });
+    await db.renameSession(sessionId, title);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[server] Error renaming session:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+/**
+ * Toggle star status for a history node chat
+ */
+app.post('/api/sessions/:id/nodes/:nodeId/star', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const sessionId = req.params.id as string;
+    const nodeId = req.params.nodeId as string;
+    const { isStarred } = req.body;
+    await db.toggleStarNode(sessionId, nodeId, !!isStarred);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[server] Error starring node:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+/**
+ * Reset a history node thread
+ */
+app.post('/api/sessions/:id/nodes/:nodeId/reset', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const sessionId = req.params.id as string;
+    const nodeId = req.params.nodeId as string;
+    await db.resetNodeChat(sessionId, nodeId);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[server] Error resetting node chat:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });

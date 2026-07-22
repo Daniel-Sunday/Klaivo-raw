@@ -67,11 +67,16 @@ export async function initDb(): Promise<void> {
         dependencies TEXT NOT NULL DEFAULT '[]',
         status TEXT NOT NULL DEFAULT 'locked',
         order_index INTEGER NOT NULL,
+        is_starred INTEGER NOT NULL DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id, session_id),
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);
+    // Ensure is_starred column exists if table was created earlier
+    try {
+      sqliteDb.exec(`ALTER TABLE nodes ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0`);
+    } catch (_) {}
     sqliteDb.exec(`
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,15 +186,10 @@ export async function getAllSessionsWithNodes(): Promise<(Session & { nodes: Cur
 
     const result: (Session & { nodes: CurriculumNode[] })[] = [];
     for (const session of sessionsData) {
-      const { data: nodesData } = await supabase
-        .from('nodes')
-        .select('*')
-        .eq('session_id', session.id)
-        .order('order_index', { ascending: true });
-
+      const nodes = await getNodes(session.id);
       result.push({
         ...(session as Session),
-        nodes: (nodesData || []) as CurriculumNode[]
+        nodes
       });
     }
     return result;
@@ -340,6 +340,7 @@ export async function createNodes(nodesList: CurriculumNode[]): Promise<void> {
 }
 
 export async function getNodes(sessionId: string): Promise<CurriculumNode[]> {
+  let nodesList: CurriculumNode[] = [];
   if (supabase) {
     const { data, error } = await supabase
       .from('nodes')
@@ -347,17 +348,35 @@ export async function getNodes(sessionId: string): Promise<CurriculumNode[]> {
       .eq('session_id', sessionId)
       .order('order_index', { ascending: true });
 
-    if (error) throw new Error(`[Supabase] Error fetching nodes: ${error.message}`);
-    return data as CurriculumNode[];
-  } else {
+    if (!error && data) {
+      nodesList = data as CurriculumNode[];
+    }
+  }
+  
+  if (nodesList.length === 0 && sqliteDb) {
     const list = sqliteDb.prepare('SELECT * FROM nodes WHERE session_id = ? ORDER BY order_index ASC').all(sessionId) as any[];
-    return list.map(node => {
+    nodesList = list.map(node => {
       node.dependencies = typeof node.dependencies === 'string'
         ? JSON.parse(node.dependencies)
         : node.dependencies;
       return node as CurriculumNode;
     });
   }
+
+  if (sqliteDb && nodesList.length > 0) {
+    try {
+      const localList = sqliteDb.prepare('SELECT id, session_id, is_starred FROM nodes WHERE is_starred = 1').all() as any[];
+      const starMap: Record<string, boolean> = {};
+      localList.forEach(l => { starMap[`${l.session_id}:${l.id}`] = true; });
+      nodesList.forEach(n => {
+        if (starMap[`${sessionId}:${n.id}`]) {
+          (n as any).is_starred = 1;
+        }
+      });
+    } catch (_) {}
+  }
+
+  return nodesList;
 }
 
 export async function updateNodeStatus(
@@ -376,5 +395,67 @@ export async function updateNodeStatus(
   } else {
     const stmt = sqliteDb.prepare('UPDATE nodes SET status = ? WHERE session_id = ? AND id = ?');
     stmt.run(status, sessionId, nodeId);
+  }
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  if (supabase) {
+    const { error } = await supabase.from('sessions').delete().eq('id', sessionId);
+    if (error) throw new Error(`[Supabase] Error deleting session: ${error.message}`);
+  } else {
+    sqliteDb.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+    sqliteDb.prepare('DELETE FROM nodes WHERE session_id = ?').run(sessionId);
+    sqliteDb.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+  }
+}
+
+export async function renameSession(sessionId: string, newTitle: string): Promise<void> {
+  if (supabase) {
+    const { error } = await supabase.from('sessions').update({ title: newTitle }).eq('id', sessionId);
+    if (error) throw new Error(`[Supabase] Error renaming session: ${error.message}`);
+  } else {
+    sqliteDb.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(newTitle, sessionId);
+  }
+}
+
+export async function toggleStarNode(sessionId: string, nodeId: string, isStarred: boolean): Promise<void> {
+  const val = isStarred ? 1 : 0;
+  if (supabase) {
+    try {
+      await supabase.from('nodes').update({ is_starred: val }).eq('id', nodeId);
+    } catch (_) {}
+  }
+  if (sqliteDb) {
+    try {
+      const sessExist = sqliteDb.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId);
+      if (!sessExist) {
+        const cal = JSON.stringify({ level: 'beginner', known_concepts: [], weak_points: [] });
+        sqliteDb.prepare('INSERT OR IGNORE INTO sessions (id, title, intent, status, calibration) VALUES (?, ?, ?, ?, ?)').run(sessionId, 'Learning Session', 'learning', 'learning', cal);
+      }
+
+      const existing = sqliteDb.prepare('SELECT id FROM nodes WHERE id = ? AND session_id = ?').get(nodeId, sessionId);
+      if (existing) {
+        sqliteDb.prepare('UPDATE nodes SET is_starred = ? WHERE id = ? AND session_id = ?').run(val, nodeId, sessionId);
+      } else {
+        sqliteDb.prepare('INSERT OR REPLACE INTO nodes (id, session_id, title, is_starred, order_index) VALUES (?, ?, ?, ?, ?)').run(nodeId, sessionId, 'History Node', val, 0);
+      }
+    } catch (e: any) {
+      console.warn('[Database] Error starring in SQLite:', e.message);
+    }
+  }
+}
+
+export async function resetNodeChat(sessionId: string, nodeId: string): Promise<void> {
+  if (supabase) {
+    try {
+      await supabase.from('messages').delete().eq('session_id', sessionId).eq('node_id', nodeId);
+      await supabase.from('nodes').update({ status: 'available' }).eq('session_id', sessionId).eq('id', nodeId);
+    } catch (_) {}
+  }
+  if (sqliteDb) {
+    try {
+      sqliteDb.prepare('DELETE FROM messages WHERE session_id = ? AND node_id = ?').run(sessionId, nodeId);
+      sqliteDb.prepare('UPDATE nodes SET status = ? WHERE session_id = ? AND id = ?').run('available', sessionId, nodeId);
+    } catch (_) {}
   }
 }

@@ -213,11 +213,7 @@
     const chatSidebar = document.getElementById("chat-sidebar");
     const canvasPanel = document.getElementById("canvas-panel");
     const panelResizer = document.getElementById("panel-resizer");
-    const gutterToggleBtn = document.getElementById("gutter-toggle-btn");
     const toggleSidebarBtn = document.getElementById("toggle-sidebar-btn");
-    const expandSidebarBtn = document.getElementById("expand-sidebar-btn");
-    const collapseCanvasBtn = document.getElementById("collapse-canvas-btn");
-    const expandCanvasBtn = document.getElementById("expand-canvas-btn");
     const sidebarNodeTitle = document.getElementById("sidebar-node-title");
     const sidebarNodeStatus = document.getElementById("sidebar-node-status");
     const exitNodeBtn = document.getElementById("exit-node-btn");
@@ -295,6 +291,7 @@
       onboardingFilesList.innerHTML = "";
       chatHistory.innerHTML = "";
       if (headerStatus) headerStatus.classList.add("hidden");
+      if (headerSplitToggleBtn) headerSplitToggleBtn.style.display = "none";
       workspaceScreen.classList.add("hidden");
       welcomeScreen.classList.remove("hidden");
       updateTimeOfDayGreeting();
@@ -317,12 +314,122 @@
         return word.toLowerCase();
       }).join(" ");
     }
+    let activeContextMenu = null;
+    function closeActiveContextMenu() {
+      if (activeContextMenu) {
+        activeContextMenu.remove();
+        activeContextMenu = null;
+        document.querySelectorAll(".nav-item-options-btn").forEach((btn) => btn.classList.remove("menu-open"));
+      }
+    }
+    window.addEventListener("click", () => closeActiveContextMenu());
+    window.addEventListener("scroll", () => closeActiveContextMenu(), true);
+    function createNavItemOptionsBtn() {
+      const btn = document.createElement("button");
+      btn.className = "nav-item-options-btn";
+      btn.title = "Options";
+      btn.setAttribute("aria-label", "Options");
+      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="5" r="1.5"/>
+      <circle cx="12" cy="12" r="1.5"/>
+      <circle cx="12" cy="19" r="1.5"/>
+    </svg>`;
+      return btn;
+    }
+    function showContextMenu(e, targetBtn, menuItems) {
+      e.stopPropagation();
+      closeActiveContextMenu();
+      targetBtn.classList.add("menu-open");
+      const menu = document.createElement("div");
+      menu.className = "nav-context-menu";
+      menuItems.forEach((mi) => {
+        const item = document.createElement("div");
+        item.className = `nav-context-item ${mi.isDanger ? "danger" : ""}`;
+        item.innerHTML = `${mi.iconSvg} <span>${mi.label}</span>`;
+        item.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          closeActiveContextMenu();
+          mi.onClick();
+        });
+        menu.appendChild(item);
+      });
+      document.body.appendChild(menu);
+      activeContextMenu = menu;
+      const rect = targetBtn.getBoundingClientRect();
+      let top = rect.bottom + 4;
+      let left = rect.left - 110;
+      if (left < 10) left = rect.right + 4;
+      if (top + 90 > window.innerHeight) top = rect.top - 90;
+      menu.style.top = `${top}px`;
+      menu.style.left = `${left}px`;
+    }
     async function loadNavigationHistory() {
       try {
         const res = await fetch("/api/sessions");
         if (!res.ok) return;
         const data = await res.json();
         const sessions = data.sessions || [];
+        const buildSessionNavItem = (sess) => {
+          const item = document.createElement("div");
+          item.className = `nav-item ${sess.id === sessionId && !activeNodeId ? "active" : ""}`;
+          const displayTitle = toSentenceCase(sess.title || "Untitled session");
+          item.innerHTML = `<div class="nav-item-title-container"><div class="nav-item-title">${displayTitle}</div></div>`;
+          item.addEventListener("click", () => {
+            openSessionAndNode(sess.id, null);
+          });
+          const optBtn = createNavItemOptionsBtn();
+          optBtn.addEventListener("click", (ev) => {
+            showContextMenu(ev, optBtn, [
+              {
+                label: "Rename",
+                iconSvg: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`,
+                onClick: async () => {
+                  const newTitle = prompt("Rename learning session:", sess.title);
+                  if (newTitle && newTitle.trim() && newTitle.trim() !== sess.title) {
+                    try {
+                      const updateRes = await fetch(`/api/sessions/${sess.id}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ title: newTitle.trim() })
+                      });
+                      if (updateRes.ok) {
+                        if (sess.id === sessionId && sidebarNodeTitle) {
+                          sidebarNodeTitle.textContent = toSentenceCase(newTitle.trim());
+                        }
+                        loadNavigationHistory();
+                      }
+                    } catch (err) {
+                      console.error("Error renaming session:", err);
+                    }
+                  }
+                }
+              },
+              {
+                label: "Delete",
+                iconSvg: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`,
+                isDanger: true,
+                onClick: async () => {
+                  if (confirm(`Delete "${displayTitle}"?`)) {
+                    try {
+                      const delRes = await fetch(`/api/sessions/${sess.id}`, { method: "DELETE" });
+                      if (delRes.ok) {
+                        if (sess.id === sessionId) {
+                          resetToWelcomeScreen();
+                        } else {
+                          loadNavigationHistory();
+                        }
+                      }
+                    } catch (err) {
+                      console.error("Error deleting session:", err);
+                    }
+                  }
+                }
+              }
+            ]);
+          });
+          item.appendChild(optBtn);
+          return item;
+        };
         navSessionsList.innerHTML = "";
         if (sessions.length === 0) {
           navSessionsList.innerHTML = `<div class="nav-item-sub" style="padding: 6px 8px;">No sessions yet</div>`;
@@ -330,28 +437,14 @@
           const visibleSessions = sessions.slice(0, 7);
           const remainingSessions = sessions.slice(7);
           visibleSessions.forEach((sess) => {
-            const item = document.createElement("div");
-            item.className = `nav-item ${sess.id === sessionId && !activeNodeId ? "active" : ""}`;
-            const displayTitle = toSentenceCase(sess.title || "Untitled session");
-            item.innerHTML = `<div class="nav-item-title">${displayTitle}</div>`;
-            item.addEventListener("click", () => {
-              openSessionAndNode(sess.id, null);
-            });
-            navSessionsList.appendChild(item);
+            navSessionsList.appendChild(buildSessionNavItem(sess));
           });
           if (remainingSessions.length > 0) {
             const moreContainer = document.createElement("div");
             moreContainer.className = "nav-more-sessions-container";
             moreContainer.style.display = "none";
             remainingSessions.forEach((sess) => {
-              const item = document.createElement("div");
-              item.className = `nav-item ${sess.id === sessionId && !activeNodeId ? "active" : ""}`;
-              const displayTitle = toSentenceCase(sess.title || "Untitled session");
-              item.innerHTML = `<div class="nav-item-title">${displayTitle}</div>`;
-              item.addEventListener("click", () => {
-                openSessionAndNode(sess.id, null);
-              });
-              moreContainer.appendChild(item);
+              moreContainer.appendChild(buildSessionNavItem(sess));
             });
             navSessionsList.appendChild(moreContainer);
             const showMoreBtn = document.createElement("div");
@@ -382,11 +475,58 @@
           allNodeChats.slice(0, 20).forEach((chat) => {
             const item = document.createElement("div");
             item.className = `nav-item ${chat.sessionId === sessionId && chat.node.id === activeNodeId ? "active" : ""}`;
+            const isStarred = !!chat.node.is_starred;
+            const starIcon = isStarred ? `<span class="nav-item-star-icon" title="Starred">\u2605</span>` : "";
             const nodeTitle = toSentenceCase(chat.node.title);
-            item.innerHTML = `<div class="nav-item-title">${nodeTitle}</div>`;
+            item.innerHTML = `<div class="nav-item-title-container">${starIcon}<div class="nav-item-title">${nodeTitle}</div></div>`;
             item.addEventListener("click", () => {
               openSessionAndNode(chat.sessionId, chat.node.id);
             });
+            const optBtn = createNavItemOptionsBtn();
+            optBtn.addEventListener("click", (ev) => {
+              showContextMenu(ev, optBtn, [
+                {
+                  label: isStarred ? "Unstar" : "Star",
+                  iconSvg: `<svg width="14" height="14" viewBox="0 0 24 24" fill="${isStarred ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`,
+                  onClick: async () => {
+                    try {
+                      const starRes = await fetch(`/api/sessions/${chat.sessionId}/nodes/${chat.node.id}/star`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ isStarred: !isStarred })
+                      });
+                      if (starRes.ok) {
+                        loadNavigationHistory();
+                      }
+                    } catch (err) {
+                      console.error("Error starring history item:", err);
+                    }
+                  }
+                },
+                {
+                  label: "Reset Thread",
+                  iconSvg: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>`,
+                  onClick: async () => {
+                    if (confirm(`Reset conversation thread for "${nodeTitle}"?
+
+This will clear chat history for this concept node so you can re-learn it from scratch.`)) {
+                      try {
+                        const resetRes = await fetch(`/api/sessions/${chat.sessionId}/nodes/${chat.node.id}/reset`, { method: "POST" });
+                        if (resetRes.ok) {
+                          if (chat.sessionId === sessionId && chat.node.id === activeNodeId) {
+                            chatHistory.innerHTML = "";
+                          }
+                          loadNavigationHistory();
+                        }
+                      } catch (err) {
+                        console.error("Error resetting history chat:", err);
+                      }
+                    }
+                  }
+                }
+              ]);
+            });
+            item.appendChild(optBtn);
             navHistoryList.appendChild(item);
           });
         }
@@ -409,16 +549,17 @@
         updateStats();
         enterDiscoveryMode();
         activateSplitScreen();
+        document.querySelectorAll("#nav-sessions-list .nav-item, #nav-history-list .nav-item").forEach((el) => el.classList.remove("active"));
         if (nodeId) {
           const targetNode = nodes.find((n) => n.id === nodeId);
           if (targetNode) {
             activeNodeId = nodeId;
-            sidebarNodeTitle.textContent = toSentenceCase(targetNode.title);
+            if (sidebarNodeTitle) sidebarNodeTitle.textContent = toSentenceCase(targetNode.title);
             if (sidebarNodeStatus) {
               sidebarNodeStatus.textContent = targetNode.status.toUpperCase();
               sidebarNodeStatus.className = `node-badge ${targetNode.status}`;
             }
-            exitNodeBtn.style.display = "block";
+            if (exitNodeBtn) exitNodeBtn.style.display = "block";
             document.querySelectorAll(".svg-node-group").forEach((el) => el.classList.remove("active"));
             document.getElementById(`node-group-${nodeId}`)?.classList.add("active");
             chatHistory.innerHTML = "";
@@ -430,15 +571,14 @@
           }
         } else {
           activeNodeId = null;
-          sidebarNodeTitle.textContent = toSentenceCase(data.session.title || "Learning Session");
+          if (sidebarNodeTitle) sidebarNodeTitle.textContent = toSentenceCase(data.session.title || "Learning Session");
           if (sidebarNodeStatus) {
             sidebarNodeStatus.textContent = "DIAGNOSIS";
           }
-          exitNodeBtn.style.display = "none";
+          if (exitNodeBtn) exitNodeBtn.style.display = "none";
           chatHistory.innerHTML = "";
           loadGlobalChat();
         }
-        loadNavigationHistory();
       } catch (err) {
         console.error("Error loading session from nav:", err);
       }
@@ -448,45 +588,44 @@
       welcomeScreen.classList.add("hidden");
       workspaceScreen.classList.remove("hidden");
       workspaceScreen.classList.add("discovery-mode");
+      if (headerSplitToggleBtn) headerSplitToggleBtn.style.display = "flex";
     }
     function activateSplitScreen() {
       workspaceScreen.classList.remove("discovery-mode");
-      toggleSidebarBtn.classList.remove("hidden");
+      if (toggleSidebarBtn) toggleSidebarBtn.classList.remove("hidden");
       chatInput.placeholder = "Type your response...";
+      if (headerSplitToggleBtn) headerSplitToggleBtn.style.display = "flex";
     }
     let currentViewMode = "split";
     let isResizing = false;
+    const headerSplitToggleBtn = document.getElementById("header-split-toggle-btn");
+    const canvasFullscreenBtn = document.getElementById("canvas-fullscreen-btn");
+    if (headerSplitToggleBtn) headerSplitToggleBtn.style.display = "none";
     function setWorkspaceViewMode(mode) {
       currentViewMode = mode;
       chatSidebar.classList.remove("collapsed");
       canvasPanel.classList.remove("collapsed");
       workspaceScreen.classList.remove("chat-only-mode");
       workspaceScreen.classList.remove("canvas-only-mode");
-      expandSidebarBtn.classList.add("hidden");
-      expandCanvasBtn.classList.add("hidden");
       panelResizer.style.display = "block";
       if (mode === "canvas-only") {
         chatSidebar.classList.add("collapsed");
         workspaceScreen.classList.add("canvas-only-mode");
-        expandSidebarBtn.classList.remove("hidden");
         panelResizer.style.display = "none";
+        if (headerSplitToggleBtn) headerSplitToggleBtn.classList.remove("active");
       } else if (mode === "chat-only") {
         canvasPanel.classList.add("collapsed");
         workspaceScreen.classList.add("chat-only-mode");
-        expandCanvasBtn.classList.remove("hidden");
         panelResizer.style.display = "none";
+        if (headerSplitToggleBtn) headerSplitToggleBtn.classList.remove("active");
+      } else {
+        if (headerSplitToggleBtn) headerSplitToggleBtn.classList.add("active");
       }
     }
-    toggleSidebarBtn?.addEventListener("click", () => {
-      setWorkspaceViewMode(currentViewMode === "canvas-only" ? "split" : "canvas-only");
-    });
-    expandSidebarBtn?.addEventListener("click", () => setWorkspaceViewMode("split"));
-    collapseCanvasBtn?.addEventListener("click", () => {
+    headerSplitToggleBtn?.addEventListener("click", () => {
       setWorkspaceViewMode(currentViewMode === "chat-only" ? "split" : "chat-only");
     });
-    expandCanvasBtn?.addEventListener("click", () => setWorkspaceViewMode("split"));
-    gutterToggleBtn?.addEventListener("click", (e) => {
-      e.stopPropagation();
+    canvasFullscreenBtn?.addEventListener("click", () => {
       setWorkspaceViewMode(currentViewMode === "canvas-only" ? "split" : "canvas-only");
     });
     window.addEventListener("keydown", (e) => {
@@ -627,8 +766,8 @@
     });
     suggestionChips.forEach((chip) => {
       chip.addEventListener("click", () => {
-        const prompt = chip.dataset.prompt || chip.textContent?.trim() || "";
-        welcomeInput.value = prompt;
+        const prompt2 = chip.dataset.prompt || chip.textContent?.trim() || "";
+        welcomeInput.value = prompt2;
         welcomeInput.focus();
       });
     });
@@ -640,17 +779,17 @@
     });
     welcomeSendBtn.addEventListener("click", startSession);
     async function startSession() {
-      const prompt = welcomeInput.value.trim();
-      if (!prompt) {
+      const prompt2 = welcomeInput.value.trim();
+      if (!prompt2) {
         welcomeInput.focus();
         return;
       }
       enterDiscoveryMode();
-      appendMessage("user", prompt);
+      appendMessage("user", prompt2);
       const thinkingWrapper = appendMessage("assistant", '<div class="thinking-dots"><span></span><span></span><span></span></div>');
       try {
         const formData = new FormData();
-        formData.append("initial_prompt", prompt);
+        formData.append("initial_prompt", prompt2);
         selectedFiles.forEach((file) => formData.append("documents", file));
         const response = await fetch("/api/sessions/start", { method: "POST", body: formData });
         if (!response.ok) throw new Error("Failed to start session");
@@ -658,9 +797,9 @@
         sessionId = data.sessionId;
         calibration = data.calibration.level;
         thinkingWrapper.remove();
-        headerCalibration.textContent = calibration;
-        headerStatus.classList.remove("hidden");
-        canvasSessionTitle.textContent = prompt;
+        if (headerCalibration) headerCalibration.textContent = calibration;
+        if (headerStatus) headerStatus.classList.remove("hidden");
+        if (canvasSessionTitle) canvasSessionTitle.textContent = prompt2;
         appendMessage("assistant", data.diagnosticQuestion);
         if (data.nodes && data.nodes.length > 0) {
           nodes = data.nodes;
@@ -702,10 +841,12 @@
       document.querySelectorAll(".svg-node-group").forEach((el) => el.classList.remove("active"));
       document.getElementById(`node-group-${node.id}`)?.classList.add("active");
       activeNodeId = node.id;
-      sidebarNodeTitle.textContent = node.title;
-      sidebarNodeStatus.textContent = node.status.toUpperCase();
-      sidebarNodeStatus.className = `node-badge ${node.status}`;
-      exitNodeBtn.style.display = "block";
+      if (sidebarNodeTitle) sidebarNodeTitle.textContent = node.title;
+      if (sidebarNodeStatus) {
+        sidebarNodeStatus.textContent = node.status.toUpperCase();
+        sidebarNodeStatus.className = `node-badge ${node.status}`;
+      }
+      if (exitNodeBtn) exitNodeBtn.style.display = "block";
       chatHistory.innerHTML = "";
       const thinkingWrapper = appendMessage("assistant", '<div class="thinking-dots"><span></span><span></span><span></span></div>', node.id);
       try {

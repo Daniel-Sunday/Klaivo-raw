@@ -77,7 +77,17 @@
     <!-- Main Workspace Container -->
     <div class="main-content-wrapper">
       <!-- Main App Header -->
-      <header class="app-header"></header>
+      <header class="app-header">
+        <div class="header-right-cluster">
+          <button class="header-split-toggle-btn active" id="header-split-toggle-btn" title="Toggle Canvas Split View" aria-label="Toggle Canvas Split View">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <line x1="15" y1="3" x2="15" y2="21"/>
+              <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4V3z" fill="currentColor" opacity="0.3"/>
+            </svg>
+          </button>
+        </div>
+      </header>
 
     <div class="screen-wrapper">
 
@@ -125,8 +135,9 @@
             </div>
           </div>
 
+          <!-- Quick learning suggestions (pushed close under input card) -->
           <div class="welcome-suggestions">
-            <button class="suggestion-chip" data-prompt="Prepare me for WAEC Chemistry — Organic Chemistry section" aria-label="WAEC Chemistry syllabus">⚗️ WAEC Chemistry</button>
+            <button class="suggestion-chip" data-prompt="Prepare me for WAEC Chemistry — Organic Chemistry section" aria-label="WAEC Chemistry topic">🧪 WAEC Chemistry</button>
             <button class="suggestion-chip" data-prompt="Help me understand Calculus — differentiation and integration" aria-label="Calculus topic">∫ Calculus</button>
             <button class="suggestion-chip" data-prompt="I want to pass my AWS Solutions Architect exam" aria-label="AWS Exam Prep">☁️ AWS Exam Prep</button>
             <button class="suggestion-chip" data-prompt="Teach me Python programming from scratch" aria-label="Python Basics">🐍 Python Basics</button>
@@ -141,15 +152,6 @@
 
         <!-- Sidebar Chat panel (Left side — Column 1: AI Text Area) -->
         <aside class="chat-sidebar" id="chat-sidebar">
-          <!-- Floating Expand Canvas Button (when canvas is collapsed) -->
-          <button class="expand-panel-btn expand-canvas-btn hidden" id="expand-canvas-btn" title="Show Workspace Canvas" aria-label="Show Workspace Canvas">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-              <line x1="9" y1="3" x2="9" y2="21"/>
-            </svg>
-            <span>Show Canvas</span>
-          </button>
-
           <div class="sidebar-header">
             <div style="display: flex; flex-direction: column; gap: 2px;">
               <h3 id="sidebar-node-title" class="sidebar-node-title-el">Learning Session</h3>
@@ -157,12 +159,6 @@
             <div style="display: flex; align-items: center; gap: 8px;">
               <button class="file-upload-btn" id="exit-node-btn" style="display: none; padding: 6px 12px;" aria-label="Back to Overview Path">
                 Back to Overview
-              </button>
-              <button class="icon-toggle-btn hidden" id="toggle-sidebar-btn" title="Collapse Chat Panel (Ctrl+B)" aria-label="Collapse Chat Panel">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                  <line x1="9" y1="3" x2="9" y2="21"/>
-                </svg>
               </button>
             </div>
           </div>
@@ -193,19 +189,14 @@
 
         <!-- Canvas panel (Right side — Column 2: Canvas) -->
         <main class="canvas-panel" id="canvas-panel" aria-label="Interactive Knowledge Graph Workspace">
-          <!-- Floating Expand Sidebar/Chat Button (when chat is collapsed) -->
-          <button class="expand-panel-btn expand-chat-btn hidden" id="expand-sidebar-btn" title="Show AI Chat Panel (Ctrl+B)" aria-label="Show AI Chat Panel">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-            </svg>
-            <span>Show AI Text</span>
-          </button>
-          
           <!-- Zoom & Pan & Panel Action Controls (WCAG 44px Touch Targets) -->
           <div class="canvas-controls">
-            <button class="canvas-btn collapse-canvas-btn-ui" id="collapse-canvas-btn" title="Collapse Canvas" aria-label="Collapse Canvas View">
+            <button class="canvas-btn canvas-fullscreen-btn" id="canvas-fullscreen-btn" title="Expand Canvas Fullscreen" aria-label="Expand Canvas Fullscreen">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="9 18 15 12 9 6"></polyline>
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <polyline points="9 21 3 21 3 15"></polyline>
+                <line x1="21" y1="3" x2="14" y2="10"></line>
+                <line x1="3" y1="21" x2="10" y2="14"></line>
               </svg>
             </button>
             <button class="canvas-btn" id="zoom-in-btn" title="Zoom In" aria-label="Zoom In">+</button>
