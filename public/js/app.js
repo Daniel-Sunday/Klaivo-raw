@@ -327,7 +327,9 @@
         if (sessions.length === 0) {
           navSessionsList.innerHTML = `<div class="nav-item-sub" style="padding: 6px 8px;">No sessions yet</div>`;
         } else {
-          sessions.forEach((sess) => {
+          const visibleSessions = sessions.slice(0, 7);
+          const remainingSessions = sessions.slice(7);
+          visibleSessions.forEach((sess) => {
             const item = document.createElement("div");
             item.className = `nav-item ${sess.id === sessionId && !activeNodeId ? "active" : ""}`;
             const displayTitle = toSentenceCase(sess.title || "Untitled session");
@@ -337,6 +339,31 @@
             });
             navSessionsList.appendChild(item);
           });
+          if (remainingSessions.length > 0) {
+            const moreContainer = document.createElement("div");
+            moreContainer.className = "nav-more-sessions-container";
+            moreContainer.style.display = "none";
+            remainingSessions.forEach((sess) => {
+              const item = document.createElement("div");
+              item.className = `nav-item ${sess.id === sessionId && !activeNodeId ? "active" : ""}`;
+              const displayTitle = toSentenceCase(sess.title || "Untitled session");
+              item.innerHTML = `<div class="nav-item-title">${displayTitle}</div>`;
+              item.addEventListener("click", () => {
+                openSessionAndNode(sess.id, null);
+              });
+              moreContainer.appendChild(item);
+            });
+            navSessionsList.appendChild(moreContainer);
+            const showMoreBtn = document.createElement("div");
+            showMoreBtn.className = "nav-more-toggle-btn";
+            showMoreBtn.innerHTML = `<span>More</span>`;
+            showMoreBtn.addEventListener("click", () => {
+              const isHidden = moreContainer.style.display === "none";
+              moreContainer.style.display = isHidden ? "block" : "none";
+              showMoreBtn.innerHTML = isHidden ? `<span>Less</span>` : `<span>More</span>`;
+            });
+            navSessionsList.appendChild(showMoreBtn);
+          }
         }
         navHistoryList.innerHTML = "";
         const allNodeChats = [];
@@ -387,8 +414,10 @@
           if (targetNode) {
             activeNodeId = nodeId;
             sidebarNodeTitle.textContent = toSentenceCase(targetNode.title);
-            sidebarNodeStatus.textContent = targetNode.status.toUpperCase();
-            sidebarNodeStatus.className = `node-badge ${targetNode.status}`;
+            if (sidebarNodeStatus) {
+              sidebarNodeStatus.textContent = targetNode.status.toUpperCase();
+              sidebarNodeStatus.className = `node-badge ${targetNode.status}`;
+            }
             exitNodeBtn.style.display = "block";
             document.querySelectorAll(".svg-node-group").forEach((el) => el.classList.remove("active"));
             document.getElementById(`node-group-${nodeId}`)?.classList.add("active");
@@ -401,9 +430,10 @@
           }
         } else {
           activeNodeId = null;
-          sidebarNodeTitle.textContent = "Curriculum Diagnostic";
-          sidebarNodeStatus.textContent = "DIAGNOSIS";
-          sidebarNodeStatus.className = "node-badge diagnosis";
+          sidebarNodeTitle.textContent = toSentenceCase(data.session.title || "Learning Session");
+          if (sidebarNodeStatus) {
+            sidebarNodeStatus.textContent = "DIAGNOSIS";
+          }
           exitNodeBtn.style.display = "none";
           chatHistory.innerHTML = "";
           loadGlobalChat();
@@ -523,7 +553,19 @@
     }
     function formatMarkdown(text) {
       if (!text) return "";
-      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/\*(.*?)\*/g, "<em>$1</em>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\[blur\](.*?)\[\/blur\]/gi, '<span class="active-recall-blur" title="Click or hover to reveal term" role="button" tabindex="0">$1</span>').replace(/\[\[(.*?)\]\]/g, '<span class="active-recall-blur" title="Click or hover to reveal term" role="button" tabindex="0">$1</span>').replace(/\[(\d+)\]/g, '<span class="citation-chip" title="Citation Source [$1]">$1</span>').replace(/\n/g, "<br>");
+      const codeBlocks = [];
+      let formatted = text.replace(/```(\w+)?\n?([\s\S]*?)```/g, (_, lang, code) => {
+        const escapedCode = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const langLabel = (lang || "code").toUpperCase();
+        const blockHtml = `<pre><div class="code-block-header"><span>${langLabel}</span></div><code>${escapedCode}</code></pre>`;
+        codeBlocks.push(blockHtml);
+        return `___CODE_BLOCK_${codeBlocks.length - 1}___`;
+      });
+      formatted = formatted.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/\*(.*?)\*/g, "<em>$1</em>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\[blur\](.*?)\[\/blur\]/gi, '<span class="active-recall-blur" title="Click or hover to reveal term" role="button" tabindex="0">$1</span>').replace(/\[\[(.*?)\]\]/g, '<span class="active-recall-blur" title="Click or hover to reveal term" role="button" tabindex="0">$1</span>').replace(/\[(\d+)\]/g, '<span class="citation-chip" title="Citation Source [$1]">$1</span>').replace(/\n/g, "<br>");
+      codeBlocks.forEach((block, index) => {
+        formatted = formatted.replace(`___CODE_BLOCK_${index}___`, block);
+      });
+      return formatted;
     }
     chatHistory?.addEventListener("click", (e) => {
       const target = e.target;
@@ -700,9 +742,10 @@
     });
     exitNodeBtn.addEventListener("click", () => {
       activeNodeId = null;
-      sidebarNodeTitle.textContent = "Curriculum Diagnostic";
-      sidebarNodeStatus.textContent = "DIAGNOSIS";
-      sidebarNodeStatus.className = "node-badge diagnosis";
+      sidebarNodeTitle.textContent = "Learning Session";
+      if (sidebarNodeStatus) {
+        sidebarNodeStatus.textContent = "DIAGNOSIS";
+      }
       exitNodeBtn.style.display = "none";
       chatHistory.innerHTML = "";
       loadGlobalChat();
@@ -797,7 +840,9 @@
     }
     function updateStats() {
       const completedCount = nodes.filter((n) => n.status === "completed").length;
-      canvasSessionStats.textContent = `${completedCount} of ${nodes.length} Nodes Completed`;
+      if (canvasSessionStats) {
+        canvasSessionStats.textContent = `${completedCount} of ${nodes.length} Nodes Completed`;
+      }
       const masteryPath = document.getElementById("header-mastery-progress-path");
       const masteryText = document.getElementById("header-mastery-text");
       const masteryWrapper = document.querySelector(".mastery-ring-wrapper");

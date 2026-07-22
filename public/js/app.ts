@@ -183,12 +183,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await res.json();
       const sessions = data.sessions || [];
 
-      // 1. Render Session section (Overall learning sessions: a, a, a - no icons on items)
+      // 1. Render Session section (First 7 sessions visible, remaining collapsed under More button)
       navSessionsList.innerHTML = '';
       if (sessions.length === 0) {
         navSessionsList.innerHTML = `<div class="nav-item-sub" style="padding: 6px 8px;">No sessions yet</div>`;
       } else {
-        sessions.forEach((sess: any) => {
+        const visibleSessions = sessions.slice(0, 7);
+        const remainingSessions = sessions.slice(7);
+
+        visibleSessions.forEach((sess: any) => {
           const item = document.createElement('div');
           item.className = `nav-item ${sess.id === sessionId && !activeNodeId ? 'active' : ''}`;
           const displayTitle = toSentenceCase(sess.title || 'Untitled session');
@@ -198,6 +201,36 @@ document.addEventListener('DOMContentLoaded', () => {
           });
           navSessionsList.appendChild(item);
         });
+
+        if (remainingSessions.length > 0) {
+          const moreContainer = document.createElement('div');
+          moreContainer.className = 'nav-more-sessions-container';
+          moreContainer.style.display = 'none';
+
+          remainingSessions.forEach((sess: any) => {
+            const item = document.createElement('div');
+            item.className = `nav-item ${sess.id === sessionId && !activeNodeId ? 'active' : ''}`;
+            const displayTitle = toSentenceCase(sess.title || 'Untitled session');
+            item.innerHTML = `<div class="nav-item-title">${displayTitle}</div>`;
+            item.addEventListener('click', () => {
+              openSessionAndNode(sess.id, null);
+            });
+            moreContainer.appendChild(item);
+          });
+
+          navSessionsList.appendChild(moreContainer);
+
+          const showMoreBtn = document.createElement('div');
+          showMoreBtn.className = 'nav-more-toggle-btn';
+          showMoreBtn.innerHTML = `<span>More</span>`;
+          showMoreBtn.addEventListener('click', () => {
+            const isHidden = moreContainer.style.display === 'none';
+            moreContainer.style.display = isHidden ? 'block' : 'none';
+            showMoreBtn.innerHTML = isHidden ? `<span>Less</span>` : `<span>More</span>`;
+          });
+
+          navSessionsList.appendChild(showMoreBtn);
+        }
       }
 
       // 2. Render History section (Chronological node chats: b, b, b - no icons on items)
@@ -258,8 +291,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (targetNode) {
           activeNodeId = nodeId;
           sidebarNodeTitle.textContent = toSentenceCase(targetNode.title);
-          sidebarNodeStatus.textContent = targetNode.status.toUpperCase();
-          sidebarNodeStatus.className = `node-badge ${targetNode.status}`;
+          if (sidebarNodeStatus) {
+            sidebarNodeStatus.textContent = targetNode.status.toUpperCase();
+            sidebarNodeStatus.className = `node-badge ${targetNode.status}`;
+          }
           exitNodeBtn.style.display = 'block';
 
           document.querySelectorAll('.svg-node-group').forEach(el => el.classList.remove('active'));
@@ -274,9 +309,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       } else {
         activeNodeId = null;
-        sidebarNodeTitle.textContent = 'Curriculum Diagnostic';
-        sidebarNodeStatus.textContent = 'DIAGNOSIS';
-        sidebarNodeStatus.className = 'node-badge diagnosis';
+        sidebarNodeTitle.textContent = toSentenceCase(data.session.title || 'Learning Session');
+        if (sidebarNodeStatus) {
+          sidebarNodeStatus.textContent = 'DIAGNOSIS';
+        }
         exitNodeBtn.style.display = 'none';
         chatHistory.innerHTML = '';
         loadGlobalChat();
@@ -436,19 +472,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function formatMarkdown(text: string): string {
     if (!text) return '';
-    return text
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
+
+    const codeBlocks: string[] = [];
+    let formatted = text.replace(/```(\w+)?\n?([\s\S]*?)```/g, (_, lang, code) => {
+      const escapedCode = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const langLabel = (lang || 'code').toUpperCase();
+      const blockHtml = `<pre><div class="code-block-header"><span>${langLabel}</span></div><code>${escapedCode}</code></pre>`;
+      codeBlocks.push(blockHtml);
+      return `___CODE_BLOCK_${codeBlocks.length - 1}___`;
+    });
+
+    formatted = formatted
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
       .replace(/`([^`]+)`/g, '<code>$1</code>')
-      // Constitution Active Recall Blur Mask: [[term]] or [blur]term[/blur]
       .replace(/\[blur\](.*?)\[\/blur\]/gi, '<span class="active-recall-blur" title="Click or hover to reveal term" role="button" tabindex="0">$1</span>')
       .replace(/\[\[(.*?)\]\]/g, '<span class="active-recall-blur" title="Click or hover to reveal term" role="button" tabindex="0">$1</span>')
-      // Constitution Superscript Citation Chips: [1], [2]
       .replace(/\[(\d+)\]/g, '<span class="citation-chip" title="Citation Source [$1]">$1</span>')
       .replace(/\n/g, '<br>');
+
+    codeBlocks.forEach((block, index) => {
+      formatted = formatted.replace(`___CODE_BLOCK_${index}___`, block);
+    });
+
+    return formatted;
   }
 
   // Active Recall Mask Click Handler (reveals blurred terms)
@@ -680,9 +730,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   exitNodeBtn.addEventListener('click', () => {
     activeNodeId = null;
-    sidebarNodeTitle.textContent = 'Curriculum Diagnostic';
-    sidebarNodeStatus.textContent = 'DIAGNOSIS';
-    sidebarNodeStatus.className = 'node-badge diagnosis';
+    sidebarNodeTitle.textContent = 'Learning Session';
+    if (sidebarNodeStatus) {
+      sidebarNodeStatus.textContent = 'DIAGNOSIS';
+    }
     exitNodeBtn.style.display = 'none';
     chatHistory.innerHTML = '';
     loadGlobalChat();
@@ -795,7 +846,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateStats(): void {
     const completedCount = nodes.filter(n => n.status === 'completed').length;
-    canvasSessionStats.textContent = `${completedCount} of ${nodes.length} Nodes Completed`;
+    if (canvasSessionStats) {
+      canvasSessionStats.textContent = `${completedCount} of ${nodes.length} Nodes Completed`;
+    }
 
     // Constitution Section 7.2: Update Header Mastery Progress Ring SVG
     const masteryPath = document.getElementById('header-mastery-progress-path') as SVGPathElement;
