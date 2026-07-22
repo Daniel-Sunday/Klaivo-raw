@@ -1522,113 +1522,172 @@ header.app-header {
   width: 100%;
   height: 100%;
   cursor: grab;
+  background: #090a10;
 }
 
 #concept-svg:active {
   cursor: grabbing;
 }
 
-/* SVG Node Styles */
+.canvas-grid-bg {
+  pointer-events: none;
+}
+
+/* SVG Node Group & Card Styles */
 .svg-node-group {
   cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.svg-node-group:hover {
+  transform: translateY(-2px);
 }
 
 .svg-node-bg {
-  fill: #11111d;
-  stroke: rgba(255, 255, 255, 0.08);
+  fill: #12131e;
+  stroke: rgba(255, 255, 255, 0.09);
   stroke-width: 1.5;
-  rx: 16px;
-  ry: 16px;
-  transition: all var(--transition-normal);
+  transition: fill 0.2s ease, stroke 0.2s ease;
 }
 
 .svg-node-group:hover .svg-node-bg {
-  stroke: var(--accent-primary);
-  fill: #151528;
+  stroke: rgba(99, 102, 241, 0.6);
+  fill: #161726;
 }
 
 .svg-node-group.completed .svg-node-bg {
-  stroke: var(--accent-emerald);
-  fill: rgba(16, 185, 129, 0.06);
+  stroke: rgba(16, 185, 129, 0.35);
+  fill: #111b19;
 }
 
 .svg-node-group.active .svg-node-bg {
-  stroke: var(--accent-primary);
-  fill: rgba(99, 102, 241, 0.08);
-  filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.3));
+  stroke: #6366f1;
+  fill: #16172d;
+}
+
+.svg-node-group.available .svg-node-bg {
+  stroke: rgba(129, 140, 248, 0.4);
+  fill: #141525;
 }
 
 .svg-node-group.locked .svg-node-bg {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: not-allowed;
+  fill: #0d0e16;
+  stroke: rgba(255, 255, 255, 0.05);
 }
 
+/* Left Indicator Status Accent Bar */
+.svg-node-accent-bar {
+  transition: fill 0.2s ease;
+}
+
+.svg-node-accent-bar.completed {
+  fill: #10b981;
+}
+
+.svg-node-accent-bar.active {
+  fill: #6366f1;
+}
+
+.svg-node-accent-bar.available {
+  fill: #818cf8;
+}
+
+.svg-node-accent-bar.locked {
+  fill: #334155;
+}
+
+/* Typography & Subtext */
 .svg-node-text-title {
-  font-family: var(--font-display);
+  font-family: var(--font-sans);
   font-weight: 600;
   font-size: 13px;
-  fill: var(--text-primary);
+  fill: #f8fafc;
+  letter-spacing: -0.2px;
 }
 
 .svg-node-group.locked .svg-node-text-title {
-  fill: var(--text-muted);
+  fill: #64748b;
 }
 
 .svg-node-text-desc {
   font-family: var(--font-sans);
-  font-size: 10px;
-  fill: var(--text-secondary);
+  font-size: 10.5px;
+  fill: rgba(214, 213, 212, 0.55);
 }
 
 .svg-node-group.locked .svg-node-text-desc {
-  fill: var(--text-muted);
+  fill: #475569;
 }
 
+/* Sequence Badge Pill */
 .svg-node-badge-bg {
-  fill: rgba(255, 255, 255, 0.05);
-  rx: 6px;
+  fill: rgba(255, 255, 255, 0.06);
+}
+
+.svg-node-badge-bg.completed {
+  fill: rgba(16, 185, 129, 0.15);
+}
+
+.svg-node-badge-bg.active {
+  fill: rgba(99, 102, 241, 0.2);
 }
 
 .svg-node-badge-text {
   font-family: var(--font-sans);
-  font-size: 9px;
-  fill: var(--text-secondary);
+  font-size: 8.5px;
+  font-weight: 700;
+  fill: rgba(255, 255, 255, 0.65);
+  letter-spacing: 0.5px;
 }
 
+.svg-node-badge-bg.completed + .svg-node-badge-text {
+  fill: #34d399;
+}
+
+.svg-node-badge-bg.active + .svg-node-badge-text {
+  fill: #a5b4fc;
+}
+
+/* Icon Container Background */
 .svg-node-icon-bg {
-  rx: 8px;
+  transition: fill 0.2s ease;
 }
 
-.svg-node-group.completed .svg-node-icon-bg {
-  fill: rgba(16, 185, 129, 0.15);
+.svg-node-icon-bg.completed {
+  fill: rgba(16, 185, 129, 0.12);
 }
 
-.svg-node-group.active .svg-node-icon-bg {
-  fill: rgba(99, 102, 241, 0.15);
+.svg-node-icon-bg.active {
+  fill: rgba(99, 102, 241, 0.18);
 }
 
-.svg-node-group.locked .svg-node-icon-bg {
+.svg-node-icon-bg.available {
+  fill: rgba(129, 140, 248, 0.12);
+}
+
+.svg-node-icon-bg.locked {
   fill: rgba(255, 255, 255, 0.03);
 }
 
-/* SVG Line Connections */
+/* SVG Line Connections & Flow */
 .svg-edge-path {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.06);
   stroke-width: 2.5;
   stroke-linecap: round;
-  transition: all var(--transition-normal);
+  transition: stroke 0.3s ease;
 }
 
 .svg-edge-path.active,
 .svg-edge-path.available {
-  stroke: var(--accent-primary);
-  stroke-dasharray: 6 4;
-  animation: pathFlow 20s linear infinite;
+  stroke-dasharray: 6 5;
+  animation: pathDashFlow 16s linear infinite;
 }
 
-.svg-edge-path.completed {
-  stroke: var(--accent-emerald);
+@keyframes pathDashFlow {
+  from { stroke-dashoffset: 100; }
+  to { stroke-dashoffset: 0; }
 }
 
 /* Progress Spinner Overlay */

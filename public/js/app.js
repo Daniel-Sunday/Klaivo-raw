@@ -19,7 +19,53 @@
       this.viewport = document.getElementById("canvas-viewport");
       this.edgesGroup = document.getElementById("svg-edges");
       this.nodesGroup = document.getElementById("svg-nodes");
+      this.initDefs();
       this.initEvents();
+    }
+    /** Initialize SVG Defs (Patterns, Gradients, Filters) */
+    initDefs() {
+      let defs = this.svg.querySelector("defs");
+      if (!defs) {
+        defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+        this.svg.insertBefore(defs, this.svg.firstChild);
+      }
+      defs.innerHTML = `
+      <!-- Canvas Grid Pattern -->
+      <pattern id="canvas-grid-pattern" width="32" height="32" patternUnits="userSpaceOnUse">
+        <circle cx="16" cy="16" r="1.2" fill="rgba(255, 255, 255, 0.07)"/>
+      </pattern>
+      
+      <!-- Linear Edge Gradients -->
+      <linearGradient id="edge-grad-completed" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#10b981" stop-opacity="0.8"/>
+        <stop offset="100%" stop-color="#059669" stop-opacity="0.9"/>
+      </linearGradient>
+
+      <linearGradient id="edge-grad-active" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#6366f1" stop-opacity="0.9"/>
+        <stop offset="100%" stop-color="#818cf8" stop-opacity="0.9"/>
+      </linearGradient>
+
+      <linearGradient id="edge-grad-locked" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="rgba(255, 255, 255, 0.08)"/>
+        <stop offset="100%" stop-color="rgba(255, 255, 255, 0.04)"/>
+      </linearGradient>
+
+      <!-- Glow Filters -->
+      <filter id="glow-active" x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur stdDeviation="6" result="blur" />
+        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+      </filter>
+    `;
+      let bgRect = this.svg.querySelector(".canvas-grid-bg");
+      if (!bgRect) {
+        bgRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        bgRect.setAttribute("class", "canvas-grid-bg");
+        bgRect.setAttribute("width", "100%");
+        bgRect.setAttribute("height", "100%");
+        bgRect.setAttribute("fill", "url(#canvas-grid-pattern)");
+        this.svg.insertBefore(bgRect, this.viewport);
+      }
     }
     initEvents() {
       this.svg.addEventListener("mousedown", (e) => {
@@ -50,7 +96,7 @@
         const canvasMouseX = (mouseX - this.panX) / this.zoom;
         const canvasMouseY = (mouseY - this.panY) / this.zoom;
         if (e.deltaY < 0) {
-          this.zoom = Math.min(this.zoom * zoomFactor, 3);
+          this.zoom = Math.min(this.zoom * zoomFactor, 2.5);
         } else {
           this.zoom = Math.max(this.zoom / zoomFactor, 0.4);
         }
@@ -58,24 +104,52 @@
         this.panY = mouseY - canvasMouseY * this.zoom;
         this.applyTransform();
       });
-      document.getElementById("zoom-in-btn").addEventListener("click", () => this.zoomStep(1.2));
-      document.getElementById("zoom-out-btn").addEventListener("click", () => this.zoomStep(1 / 1.2));
-      document.getElementById("zoom-reset-btn").addEventListener("click", () => this.resetView());
+      document.getElementById("zoom-in-btn")?.addEventListener("click", () => this.zoomStep(1.2));
+      document.getElementById("zoom-out-btn")?.addEventListener("click", () => this.zoomStep(1 / 1.2));
+      document.getElementById("zoom-reset-btn")?.addEventListener("click", () => this.resetView());
     }
     zoomStep(factor) {
-      const width = this.svg.clientWidth;
-      const height = this.svg.clientHeight;
+      const width = this.svg.clientWidth || 800;
+      const height = this.svg.clientHeight || 600;
       const canvasCenterX = (width / 2 - this.panX) / this.zoom;
       const canvasCenterY = (height / 2 - this.panY) / this.zoom;
-      this.zoom = Math.max(0.4, Math.min(this.zoom * factor, 3));
+      this.zoom = Math.max(0.4, Math.min(this.zoom * factor, 2.5));
       this.panX = width / 2 - canvasCenterX * this.zoom;
       this.panY = height / 2 - canvasCenterY * this.zoom;
       this.applyTransform();
     }
     resetView() {
-      this.panX = 0;
-      this.panY = 0;
-      this.zoom = 1;
+      if (this.nodes && this.nodes.length > 0) {
+        this.autoCenterTree(this.nodes);
+      } else {
+        this.panX = 0;
+        this.panY = 0;
+        this.zoom = 1;
+        this.applyTransform();
+      }
+    }
+    autoCenterTree(nodes) {
+      if (!nodes || nodes.length === 0) return;
+      let minX = Infinity, maxX = -Infinity;
+      let minY = Infinity, maxY = -Infinity;
+      nodes.forEach((n) => {
+        minX = Math.min(minX, n.x);
+        maxX = Math.max(maxX, n.x + 210);
+        minY = Math.min(minY, n.y);
+        maxY = Math.max(maxY, n.y + 86);
+      });
+      const svgW = this.svg.clientWidth || 800;
+      const svgH = this.svg.clientHeight || 600;
+      const graphW = maxX - minX;
+      const graphH = maxY - minY;
+      const padding = 80;
+      const scaleX = (svgW - padding * 2) / (graphW || 1);
+      const scaleY = (svgH - padding * 2) / (graphH || 1);
+      this.zoom = Math.min(Math.max(Math.min(scaleX, scaleY), 0.65), 1.1);
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      this.panX = svgW / 2 - centerX * this.zoom;
+      this.panY = svgH / 2 - centerY * this.zoom;
       this.applyTransform();
     }
     applyTransform() {
@@ -106,82 +180,105 @@
       nodes.forEach((node) => {
         this.drawNode(node);
       });
+      this.autoCenterTree(nodes);
     }
     drawConnection(parent, child) {
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      const pX = parent.x + 90;
-      const pY = parent.y + 40;
-      const cX = child.x + 90;
-      const cY = child.y + 40;
-      const midX = (pX + cX) / 2;
-      const dStr = `M ${pX} ${pY} C ${midX} ${pY}, ${midX} ${cY}, ${cX} ${cY}`;
+      const pX = parent.x + 210;
+      const pY = parent.y + 43;
+      const cX = child.x;
+      const cY = child.y + 43;
+      const dx = Math.abs(cX - pX) * 0.5;
+      const dStr = `M ${pX} ${pY} C ${pX + dx} ${pY}, ${cX - dx} ${cY}, ${cX} ${cY}`;
       path.setAttribute("d", dStr);
       path.setAttribute("class", `svg-edge-path ${child.status}`);
+      if (child.status === "completed") {
+        path.setAttribute("stroke", "url(#edge-grad-completed)");
+      } else if (child.status === "active" || child.status === "available") {
+        path.setAttribute("stroke", "url(#edge-grad-active)");
+      } else {
+        path.setAttribute("stroke", "url(#edge-grad-locked)");
+      }
       this.edgesGroup.appendChild(path);
     }
     drawNode(node) {
       const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
       group.setAttribute("class", `svg-node-group ${node.status}`);
       group.setAttribute("id", `node-group-${node.id}`);
-      const width = 180;
-      const height = 80;
+      const width = 210;
+      const height = 86;
+      if (node.status === "active") {
+        group.setAttribute("filter", "url(#glow-active)");
+      }
       const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
       rect.setAttribute("x", String(node.x));
       rect.setAttribute("y", String(node.y));
       rect.setAttribute("width", String(width));
       rect.setAttribute("height", String(height));
+      rect.setAttribute("rx", "14");
+      rect.setAttribute("ry", "14");
       rect.setAttribute("class", "svg-node-bg");
       group.appendChild(rect);
+      const accentBar = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      accentBar.setAttribute("x", String(node.x));
+      accentBar.setAttribute("y", String(node.y));
+      accentBar.setAttribute("width", "5");
+      accentBar.setAttribute("height", String(height));
+      accentBar.setAttribute("rx", "3");
+      accentBar.setAttribute("class", `svg-node-accent-bar ${node.status}`);
+      group.appendChild(accentBar);
       const iconBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      iconBg.setAttribute("x", String(node.x + 12));
-      iconBg.setAttribute("y", String(node.y + 16));
-      iconBg.setAttribute("width", "48");
-      iconBg.setAttribute("height", "48");
-      iconBg.setAttribute("class", "svg-node-icon-bg");
+      iconBg.setAttribute("x", String(node.x + 14));
+      iconBg.setAttribute("y", String(node.y + 21));
+      iconBg.setAttribute("width", "44");
+      iconBg.setAttribute("height", "44");
+      iconBg.setAttribute("rx", "11");
+      iconBg.setAttribute("class", `svg-node-icon-bg ${node.status}`);
       group.appendChild(iconBg);
-      const symbolText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      symbolText.setAttribute("x", String(node.x + 36));
-      symbolText.setAttribute("y", String(node.y + 45));
-      symbolText.setAttribute("text-anchor", "middle");
-      symbolText.setAttribute("dominant-baseline", "middle");
-      symbolText.setAttribute("font-size", "16");
-      symbolText.setAttribute("fill", node.status === "completed" ? "#10b981" : node.status === "active" || node.status === "available" ? "#6366f1" : "#64748b");
-      let symbol = "\u{1F512}";
-      if (node.status === "completed") symbol = "\u2713";
-      else if (node.status === "active") symbol = "\u2794";
-      else if (node.status === "available") symbol = "\u25CB";
-      symbolText.textContent = symbol;
-      group.appendChild(symbolText);
+      const iconGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      iconGroup.setAttribute("transform", `translate(${node.x + 26}, ${node.y + 33})`);
+      if (node.status === "completed") {
+        iconGroup.appendChild(this.createCheckIcon());
+      } else if (node.status === "active") {
+        iconGroup.appendChild(this.createActivePlayIcon());
+      } else if (node.status === "available") {
+        iconGroup.appendChild(this.createAvailableTargetIcon());
+      } else {
+        iconGroup.appendChild(this.createLockIcon());
+      }
+      group.appendChild(iconGroup);
+      const badgeGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      badgeGroup.setAttribute("transform", `translate(${node.x + 68}, ${node.y + 18})`);
+      const badgeBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      badgeBg.setAttribute("width", "48");
+      badgeBg.setAttribute("height", "15");
+      badgeBg.setAttribute("rx", "5");
+      badgeBg.setAttribute("class", `svg-node-badge-bg ${node.status}`);
+      badgeGroup.appendChild(badgeBg);
+      const badgeText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      badgeText.setAttribute("x", "24");
+      badgeText.setAttribute("y", "11");
+      badgeText.setAttribute("text-anchor", "middle");
+      badgeText.setAttribute("class", "svg-node-badge-text");
+      badgeText.textContent = `NODE ${node.order_index + 1}`;
+      badgeGroup.appendChild(badgeText);
+      group.appendChild(badgeGroup);
       const titleText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      titleText.setAttribute("x", String(node.x + 72));
-      titleText.setAttribute("y", String(node.y + 32));
+      titleText.setAttribute("x", String(node.x + 68));
+      titleText.setAttribute("y", String(node.y + 49));
       titleText.setAttribute("class", "svg-node-text-title");
       let title = node.title;
-      if (title.length > 14) title = title.substring(0, 12) + "...";
+      if (title.length > 16) title = title.substring(0, 14) + "\u2026";
       titleText.textContent = title;
       group.appendChild(titleText);
       const descText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      descText.setAttribute("x", String(node.x + 72));
-      descText.setAttribute("y", String(node.y + 48));
+      descText.setAttribute("x", String(node.x + 68));
+      descText.setAttribute("y", String(node.y + 66));
       descText.setAttribute("class", "svg-node-text-desc");
       let desc = node.description || "";
-      if (desc.length > 20) desc = desc.substring(0, 18) + "...";
+      if (desc.length > 22) desc = desc.substring(0, 20) + "\u2026";
       descText.textContent = desc;
       group.appendChild(descText);
-      const badgeBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      badgeBg.setAttribute("x", String(node.x + 72));
-      badgeBg.setAttribute("y", String(node.y + 56));
-      badgeBg.setAttribute("width", "45");
-      badgeBg.setAttribute("height", "14");
-      badgeBg.setAttribute("class", "svg-node-badge-bg");
-      group.appendChild(badgeBg);
-      const badgeText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      badgeText.setAttribute("x", String(node.x + 94));
-      badgeText.setAttribute("y", String(node.y + 66));
-      badgeText.setAttribute("text-anchor", "middle");
-      badgeText.setAttribute("class", "svg-node-badge-text");
-      badgeText.textContent = `Node ${node.order_index + 1}`;
-      group.appendChild(badgeText);
       group.addEventListener("click", () => {
         if (node.status === "locked") return;
         if (this.onNodeClickCallback) {
@@ -189,6 +286,33 @@
         }
       });
       this.nodesGroup.appendChild(group);
+    }
+    // --- Vector SVG Icon Helpers ---
+    createCheckIcon() {
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      g.innerHTML = `<path d="M 2 10 L 7 15 L 18 4" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+      return g;
+    }
+    createActivePlayIcon() {
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      g.innerHTML = `<polygon points="5,3 16,10 5,17" fill="#6366f1"/>`;
+      return g;
+    }
+    createAvailableTargetIcon() {
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      g.innerHTML = `
+      <circle cx="10" cy="10" r="7" fill="none" stroke="#818cf8" stroke-width="2"/>
+      <circle cx="10" cy="10" r="2.5" fill="#818cf8"/>
+    `;
+      return g;
+    }
+    createLockIcon() {
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      g.innerHTML = `
+      <rect x="3" y="8" width="14" height="10" rx="2" fill="none" stroke="#64748b" stroke-width="2"/>
+      <path d="M 6 8 V 5 A 4 4 0 0 1 14 5 V 8" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round"/>
+    `;
+      return g;
     }
   };
 
