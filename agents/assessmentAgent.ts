@@ -1,83 +1,93 @@
-import { getModelProvider } from '../providers/modelProvider';
-import { CurriculumNode, Calibration, AssessmentAgentOutput } from '../types';
+import { z } from 'zod';
+import { executeAgent, AgentResult } from './agentUtils';
+import { AssessmentResultSchema, AssessmentResult, TreeNode, MasteryMapEntry } from '../schemas';
 
-type NodeTemplate = Omit<CurriculumNode, 'session_id'>;
-
-/**
- * Assessment & Reflection Agent
- * Grades user responses and suggests calibration updates.
- */
-export async function assessAnswer(
-  node: NodeTemplate,
-  calibration: Calibration,
-  answer: string
-): Promise<AssessmentAgentOutput> {
-  const systemInstruction = `
-    You are the Assessment & Reflection Agent for Klaivo.
-    Your job is to grade the user's answer to the assessment question posed in the teaching material.
-    
-    Concept Node:
-    - Title: "${node.title}"
-    - Description: "${node.description}"
-    
-    Learner Calibration:
-    - Current Level: "${calibration.level}"
-    - Known Concepts: ${JSON.stringify(calibration.known_concepts)}
-    
-    User's Answer: "${answer}"
-    
-    Instructions:
-    1. Evaluate if the user's answer is correct and demonstrates real understanding (application, not just recall).
-    2. Write a feedback response in "feedback" using Markdown. Be encouraging. If correct, validate their thinking. If incorrect, give a clear explanation and guide them to the correct reasoning without giving away the direct answer.
-    3. Return a JSON object matching this schema:
-    {
-      "passed": boolean,
-      "feedback": "Your markdown formatted feedback and grading explanation",
-      "calibration_update": {
-        "level_delta": number, // e.g. 0.15 if they passed, -0.05 if they failed
-        "add_known": ["specific sub-concept name mastered"], // empty if failed
-        "add_weak_points": ["specific concept struggle point"] // empty if passed
-      }
-    }
-  `;
-
-  try {
-    const provider = getModelProvider();
-    const result = await provider.generateJSON<AssessmentAgentOutput>(
-      `Assess answer: "${answer}"`,
-      systemInstruction
-    );
-    console.log('[AssessmentAgent] API Grading JSON:', result);
-    return result;
-  } catch (err) {
-    console.error('[AssessmentAgent] API call failed, falling back to stub:', err);
-    return getFallbackAssessment(node, calibration, answer);
-  }
+export interface AssessmentAgentInput {
+  learnerId: string;
+  node: TreeNode;
+  learnerResponse: string;
+  priorMastery?: MasteryMapEntry | null;
 }
 
-function getFallbackAssessment(node: NodeTemplate, calibration: Calibration, answer: string): AssessmentAgentOutput {
-  const text = answer.toLowerCase();
-  const passed = text.length > 8 && 
-                 !text.includes("don't know") && 
-                 !text.includes("dont know") && 
-                 !text.includes("idk") && 
-                 !text.includes("help");
-  const feedback = passed
-    ? `Good job! Your explanation for **${node.title}** shows you understand the material. Let's move forward.`
-    : `Your answer is a bit too short or missing details. Remember to explain *why* and give specific examples! Try again.`;
-  const conceptLearned = node.title;
+export async function runAssessmentAgent(
+  input: AssessmentAgentInput,
+  mockOutput?: Partial<AssessmentResult>
+): Promise<AgentResult<AssessmentResult>> {
+  const systemInstruction = `You are the Klaivo Assessment Agent. Your job is to rigorously evaluate a learner's understanding and determine the precise shift in mastery.
+
+CRITICAL RULES:
+1. Avoid binary pass/fail thinking. Real comprehension is nuanced on a continuum from -1.0 (major regression/misconceptions) to +1.0 (flawless mastery transfer).
+2. If the learner exhibits partial understanding with misconceptions, name the exact misconceptions in "detectedMisconceptions" (e.g. ["Confuses alkanes with alkenes", "Fails to apply IUPAC numbering rules"]).
+3. You MUST provide a clear, evidence-based "reasoning" justifying the exact "masteryDelta".
+4. Set "readyToAdvance": true only if masteryDelta > 0.3 or overall understanding demonstrates baseline competency.
+
+Output must be JSON matching AssessmentResult Schema:
+{
+  "nodeId": string,
+  "masteryDelta": number (-1.0 to 1.0),
+  "detectedMisconceptions": string[],
+  "readyToAdvance": boolean,
+  "reasoning": string
+}`;
+
+  const userPrompt = `Node ID: ${input.node.id}
+Node Title: "${input.node.title}"
+Learner Response: "${input.learnerResponse}"
+Prior Mastery Entry: ${JSON.stringify(input.priorMastery || { level: 0, confusionFlags: [] })}`;
+
+  return await executeAgent<AssessmentAgentInput, AssessmentResult>({
+    agentName: 'AssessmentAgent',
+    learnerId: input.learnerId,
+    systemInstruction,
+    userPrompt,
+    inputData: input,
+    schema: AssessmentResultSchema,
+    temperature: 0.1,
+    mockFn: mockOutput
+      ? () => ({
+          nodeId: input.node.id,
+          masteryDelta: mockOutput.masteryDelta ?? 0.35,
+          detectedMisconceptions: mockOutput.detectedMisconceptions || [],
+          readyToAdvance: mockOutput.readyToAdvance ?? true,
+          reasoning: mockOutput.reasoning || "Learner demonstrated solid understanding of key principles with zero major misconceptions.",
+        })
+      : undefined,
+  });
+}
+
+// --- Legacy API Adapter (For backward compatibility with legacy endpoints) ---
+export async function assessAnswer(
+  node: any,
+  _calibrationOrResponse: any,
+  responseOrAnswer?: string
+): Promise<any> {
+  const learnerResponse = typeof responseOrAnswer === 'string' ? responseOrAnswer : typeof _calibrationOrResponse === 'string' ? _calibrationOrResponse : 'Learner response';
+
+  const treeNode: TreeNode = {
+    id: node?.id || 'node_legacy',
+    title: node?.title || 'Topic',
+    oneLineSummary: node?.description || 'Summary',
+    goalRelevance: 'Legacy topic assessment',
+    prerequisiteIds: node?.dependencies || [],
+    status: 'in_progress',
+    content: null,
+    masteryScore: 0,
+    depth: 0,
+  };
+
+  const result = await runAssessmentAgent({
+    learnerId: 'legacy_user',
+    node: treeNode,
+    learnerResponse,
+  });
 
   return {
-    passed,
-    feedback,
-    calibration_update: passed ? {
-      level_delta: 0.15,
-      add_known: [conceptLearned],
-      add_weak_points: []
-    } : {
-      level_delta: -0.05,
-      add_known: [],
-      add_weak_points: [`Struggled with basics of ${node.title}`]
-    }
+    passed: result.output.readyToAdvance,
+    feedback: result.output.reasoning,
+    calibration_update: {
+      level_delta: result.output.masteryDelta,
+      add_known: result.output.readyToAdvance ? [treeNode.title] : [],
+      add_weak_points: result.output.detectedMisconceptions,
+    },
   };
 }

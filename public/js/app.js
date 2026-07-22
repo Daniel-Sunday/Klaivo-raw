@@ -42,8 +42,8 @@
       </linearGradient>
 
       <linearGradient id="edge-grad-active" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="#6366f1" stop-opacity="0.9"/>
-        <stop offset="100%" stop-color="#818cf8" stop-opacity="0.9"/>
+        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9"/>
+        <stop offset="100%" stop-color="#d1d5db" stop-opacity="0.9"/>
       </linearGradient>
 
       <linearGradient id="edge-grad-locked" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -295,14 +295,14 @@
     }
     createActivePlayIcon() {
       const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      g.innerHTML = `<polygon points="5,3 16,10 5,17" fill="#6366f1"/>`;
+      g.innerHTML = `<polygon points="5,3 16,10 5,17" fill="#ffffff"/>`;
       return g;
     }
     createAvailableTargetIcon() {
       const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
       g.innerHTML = `
-      <circle cx="10" cy="10" r="7" fill="none" stroke="#818cf8" stroke-width="2"/>
-      <circle cx="10" cy="10" r="2.5" fill="#818cf8"/>
+      <circle cx="10" cy="10" r="7" fill="none" stroke="#e5e7eb" stroke-width="2"/>
+      <circle cx="10" cy="10" r="2.5" fill="#e5e7eb"/>
     `;
       return g;
     }
