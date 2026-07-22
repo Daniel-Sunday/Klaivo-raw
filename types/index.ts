@@ -1,3 +1,7 @@
+// Export all Phase 1 Agentic Architecture Schemas & Types
+export * from '../schemas';
+
+// Legacy UI/API Interfaces (for backward compatibility during migration)
 export interface Calibration {
   level: 'beginner' | 'intermediate' | 'advanced';
   known_concepts: string[];
@@ -36,9 +40,8 @@ export interface Message {
   created_at?: string;
 }
 
-// --- Agent Contracts ---
+// --- Legacy Agent Contracts (to keep existing agents compiling until replaced in Phase 2) ---
 
-// 1. Intent Agent Contract
 export type IntentType = 'quick_answer' | 'learning_goal' | 'problem_solving' | 'project_building' | 'research' | 'exam_prep';
 
 export interface IntentAgentOutput {
@@ -46,7 +49,6 @@ export interface IntentAgentOutput {
   reason: string;
 }
 
-// 2. Diagnosis Agent Contracts
 export interface DiagnosisAgentSummary {
   userGoal: string;
   intent: string;
@@ -60,14 +62,10 @@ export interface DiagnosisAgentOutput {
   summary: DiagnosisAgentSummary;
 }
 
-// 3. Curriculum Agent Contracts
 export interface CurriculumAgentOutput extends Array<Omit<CurriculumNode, 'session_id'>> {}
 
-// 4. Teaching Agent Contracts
-// Functions stream via writeChunk callback, so they return void/Promise<void>
 export type WriteChunkCallback = (chunk: string) => void;
 
-// 5. Assessment Agent Contracts
 export interface CalibrationUpdate {
   level_delta: number;
   add_known: string[];
@@ -80,7 +78,6 @@ export interface AssessmentAgentOutput {
   calibration_update?: CalibrationUpdate;
 }
 
-// 6. Routing Agent Contracts
 export type RoutingClassification = 'question' | 'answer';
 
 export interface RoutingAgentOutput {
