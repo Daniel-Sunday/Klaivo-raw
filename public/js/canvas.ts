@@ -40,22 +40,6 @@ export class ConceptCanvas {
         <circle cx="16" cy="16" r="1.2" fill="rgba(255, 255, 255, 0.07)"/>
       </pattern>
       
-      <!-- Linear Edge Gradients -->
-      <linearGradient id="edge-grad-completed" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="#10b981" stop-opacity="0.8"/>
-        <stop offset="100%" stop-color="#059669" stop-opacity="0.9"/>
-      </linearGradient>
-
-      <linearGradient id="edge-grad-active" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9"/>
-        <stop offset="100%" stop-color="#d1d5db" stop-opacity="0.9"/>
-      </linearGradient>
-
-      <linearGradient id="edge-grad-locked" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="rgba(255, 255, 255, 0.08)"/>
-        <stop offset="100%" stop-color="rgba(255, 255, 255, 0.04)"/>
-      </linearGradient>
-
       <!-- Glow Filters -->
       <filter id="glow-active" x="-20%" y="-20%" width="140%" height="140%">
         <feGaussianBlur stdDeviation="6" result="blur" />
@@ -241,11 +225,11 @@ export class ConceptCanvas {
     path.setAttribute('class', `svg-edge-path ${child.status}`);
     
     if (child.status === 'completed') {
-      path.setAttribute('stroke', 'url(#edge-grad-completed)');
+      path.setAttribute('stroke', '#10b981');
     } else if (child.status === 'active' || child.status === 'available') {
-      path.setAttribute('stroke', 'url(#edge-grad-active)');
+      path.setAttribute('stroke', '#ffffff');
     } else {
-      path.setAttribute('stroke', 'url(#edge-grad-locked)');
+      path.setAttribute('stroke', 'rgba(255, 255, 255, 0.12)');
     }
     
     this.edgesGroup.appendChild(path);
