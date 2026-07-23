@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { z } from 'zod';
 import { AgentLog, AgentLogSchema } from '../schemas';
+import { saveAgentLog } from '../database';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -68,13 +69,24 @@ export async function executeAgent<TInput, TOutput>(
             {
               id: 'node_mock_1',
               title: 'Core Foundations',
-              oneLineSummary: 'Fundamental concepts',
+              oneLineSummary: 'Fundamental concepts and key principles',
               goalRelevance: `Directly required to achieve ${goal?.specificObjective || 'goal'}`,
               prerequisiteIds: [],
               status: 'available',
               content: null,
               masteryScore: 0.0,
               depth: 0,
+            },
+            {
+              id: 'node_mock_2',
+              title: 'Advanced Implementation',
+              oneLineSummary: 'Practical application and mechanisms',
+              goalRelevance: `Applied mastery of ${goal?.specificObjective || 'goal'}`,
+              prerequisiteIds: ['node_mock_1'],
+              status: 'locked',
+              content: null,
+              masteryScore: 0.0,
+              depth: 1,
             },
           ],
           edges: [],
@@ -155,6 +167,9 @@ export async function executeAgent<TInput, TOutput>(
         retryCount: 0,
       });
 
+      // Persist AgentLog to database
+      await saveAgentLog(log);
+
       return { output: parseResult.data, log };
     }
   }
@@ -206,6 +221,9 @@ export async function executeAgent<TInput, TOutput>(
           retryCount,
         });
 
+        // Persist AgentLog to database
+        await saveAgentLog(log);
+
         return { output: validationResult.data, log };
       }
 
@@ -233,6 +251,9 @@ export async function executeAgent<TInput, TOutput>(
     validationPassed: false,
     retryCount: maxRetries,
   });
+
+  // Persist failed call to AgentLog table in database
+  await saveAgentLog(log);
 
   throw new Error(`Agent [${agentName}] failed validation after ${maxRetries} retries. Last error: ${lastError}`);
 }

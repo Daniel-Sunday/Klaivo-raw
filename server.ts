@@ -9,28 +9,19 @@ dotenv.config();
 
 import * as db from './database';
 import { extractTextFromPdf } from './utils/pdfReader';
-
-// Import Agent Modules
-import { classifyIntent } from './agents/intentAgent';
-import { getDiagnosticQuestion, processDiagnosticTurn } from './agents/diagnosisAgent';
-import { generateCurriculum } from './agents/curriculumAgent';
-import { streamExplanation, streamFollowUpAnswer } from './agents/teachingAgent';
-import { assessAnswer } from './agents/assessmentAgent';
-import { classifyMessageIntent } from './agents/routingAgent';
+import { KlaivoOrchestrator } from './orchestrator';
+import { LearnerState, TreeSkeleton, TreeNode } from './schemas';
 import { Calibration, CurriculumNode } from './types';
 
-// Resolve project root (handles running directly from source or compiled dist/ directory)
 const projectRoot = fs.existsSync(path.join(__dirname, 'public'))
   ? __dirname
   : path.join(__dirname, '..');
 
-// Initialize directories
 const uploadsDir = path.join(projectRoot, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Database init
 (async () => {
   await db.initDb();
 })();
@@ -38,7 +29,6 @@ if (!fs.existsSync(uploadsDir)) {
 const app = express();
 const port = process.env.PORT || 3005;
 
-// Configure Multer for PDF file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadsDir);
@@ -46,17 +36,103 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
+  },
 });
 const upload = multer({ storage });
 
 app.use(express.json());
 app.use(express.static(path.join(projectRoot, 'public')));
 
+// Singleton Orchestrator Instance for Phase 3 Pipeline
+const orchestrator = new KlaivoOrchestrator();
+
+/**
+ * Convert TreeSkeleton nodes into legacy CurriculumNode array with spatial layout (x, y)
+ * so the SVG concept canvas in public/js/canvas.ts renders the tree correctly.
+ */
+export function mapTreeSkeletonToCurriculumNodes(sessionId: string, skeleton: TreeSkeleton): CurriculumNode[] {
+  const levelMap: Record<string, number> = {};
+
+  skeleton.nodes.forEach((node) => {
+    if (node.depth !== undefined && node.depth >= 0) {
+      levelMap[node.id] = node.depth;
+    } else {
+      let maxPrereqDepth = 0;
+      node.prerequisiteIds.forEach((pId) => {
+        if (levelMap[pId] !== undefined) {
+          maxPrereqDepth = Math.max(maxPrereqDepth, levelMap[pId] + 1);
+        }
+      });
+      levelMap[node.id] = maxPrereqDepth;
+    }
+  });
+
+  const levelGroups: Record<number, TreeNode[]> = {};
+  skeleton.nodes.forEach((node) => {
+    const lvl = levelMap[node.id] || 0;
+    if (!levelGroups[lvl]) levelGroups[lvl] = [];
+    levelGroups[lvl].push(node);
+  });
+
+  const startX = 60;
+  const startY = 80;
+  const colSpacing = 280;
+  const rowSpacing = 130;
+
+  return skeleton.nodes.map((node, index) => {
+    const lvl = levelMap[node.id] || 0;
+    const group = levelGroups[lvl] || [node];
+    const itemIndex = group.indexOf(node);
+
+    const x = startX + lvl * colSpacing;
+    const y = startY + itemIndex * rowSpacing;
+
+    let uiStatus: 'locked' | 'available' | 'completed' | 'active' = 'locked';
+    if (node.status === 'mastered') uiStatus = 'completed';
+    else if (node.status === 'in_progress') uiStatus = 'active';
+    else if (node.status === 'available') uiStatus = 'available';
+    else uiStatus = 'locked';
+
+    return {
+      id: node.id,
+      session_id: sessionId,
+      title: node.title,
+      description: node.oneLineSummary,
+      x,
+      y,
+      dependencies: node.prerequisiteIds || [],
+      status: uiStatus,
+      order_index: index,
+    };
+  });
+}
+
+// Helper to construct LearnerState from Session
+function buildLearnerState(sessionId: string, session: any): LearnerState {
+  let cal: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
+  if (session?.calibration) {
+    try {
+      cal = typeof session.calibration === 'string' ? JSON.parse(session.calibration) : session.calibration;
+    } catch (_) {}
+  }
+  return {
+    learnerId: sessionId,
+    currentGoal: {
+      rawStatement: session?.title || 'Learning Session',
+      domain: session?.intent || 'General',
+      specificObjective: session?.title || 'Master goal',
+      contextArtifacts: [],
+    },
+    vocabularyLevel: cal.level === 'beginner' ? 'beginner' : cal.level === 'advanced' ? 'advanced' : 'intermediate',
+    masteryMap: {},
+    sessionHistory: [],
+  };
+}
+
 // --- API ROUTES ---
 
 /**
- * Fetch all sessions and learning nodes for left navigation bar history
+ * GET /api/sessions: Fetch all sessions & nodes for left nav bar history
  */
 app.get('/api/sessions', async (req: Request, res: Response): Promise<any> => {
   try {
@@ -69,7 +145,22 @@ app.get('/api/sessions', async (req: Request, res: Response): Promise<any> => {
 });
 
 /**
- * Start a new learning session
+ * GET /api/agent-logs: Fetch persisted agent logs for audit verification
+ */
+app.get('/api/agent-logs', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const learnerId = req.query.learnerId as string | undefined;
+    const logs = await db.getAgentLogs(learnerId);
+    return res.json({ logs, count: logs.length });
+  } catch (err: any) {
+    console.error('Error fetching agent logs:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/sessions/start: Primary Session Intake Route
+ * Serves Phase 3 Orchestrator intake pipeline (Intent -> Diagnosis -> Drafter -> Verifier)
  */
 app.post('/api/sessions/start', upload.array('documents'), async (req: Request, res: Response): Promise<any> => {
   try {
@@ -79,118 +170,163 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
     }
 
     const sessionId = crypto.randomUUID();
-    
-    // Phase 1: Intent Agent classification
-    const intent = await classifyIntent(initial_prompt);
-    
-    // Initial Calibration (default)
-    const calibration: Calibration = {
-      level: 'beginner',
-      known_concepts: [],
-      weak_points: []
-    };
 
-    // Create session in Database
-    const session = await db.createSession(sessionId, initial_prompt, intent, calibration);
-    
-    // Save user's initial prompt in messages
-    await db.createMessage(sessionId, null, 'user', initial_prompt);
-
-    // Parse any attached documents
-    let extractedText = '';
+    // Extract text from attached document files
+    const contextArtifacts: string[] = [];
     const files = req.files as Express.Multer.File[];
     if (files && files.length > 0) {
       for (const file of files) {
         if (file.mimetype === 'application/pdf') {
           const text = await extractTextFromPdf(file.path);
-          extractedText += `\n--- Document: ${file.originalname} ---\n${text}\n`;
+          contextArtifacts.push(`--- Document: ${file.originalname} ---\n${text}`);
         } else {
-          // Text file
           const text = fs.readFileSync(file.path, 'utf8');
-          extractedText += `\n--- Document: ${file.originalname} ---\n${text}\n`;
+          contextArtifacts.push(`--- Document: ${file.originalname} ---\n${text}`);
         }
-        // Cleanup temp file
-        fs.unlinkSync(file.path);
+        try {
+          fs.unlinkSync(file.path);
+        } catch (_) {}
       }
     }
 
-    // Phase 1: Diagnosis Agent generates first diagnostic question
-    const question = await getDiagnosticQuestion(intent, initial_prompt);
-    
-    // Save diagnostic question in messages
-    await db.createMessage(sessionId, null, 'assistant', question);
+    const initialLearnerState: LearnerState = {
+      learnerId: sessionId,
+      currentGoal: {
+        rawStatement: initial_prompt,
+        domain: 'General',
+        specificObjective: initial_prompt,
+        contextArtifacts,
+      },
+      vocabularyLevel: 'intermediate',
+      masteryMap: {},
+      sessionHistory: [],
+    };
 
-    res.json({
+    // Execute Phase 3 Orchestrator Intake Pipeline
+    const intakeResult = await orchestrator.handleIntakeWorkflow(
+      initial_prompt,
+      initialLearnerState,
+      contextArtifacts
+    );
+
+    // Save prompt message to DB
+    await db.createMessage(sessionId, null, 'user', initial_prompt);
+
+    if (intakeResult.status === 'needs_clarification') {
+      const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
+      await db.createSession(sessionId, initial_prompt, 'learning', 'diagnosing', calibration);
+      await db.createMessage(sessionId, null, 'assistant', intakeResult.question);
+
+      return res.json({
+        sessionId,
+        intent: 'learning',
+        calibration,
+        diagnosticQuestion: intakeResult.question,
+        status: 'diagnosing',
+      });
+    }
+
+    if (intakeResult.status === 'needs_more_context') {
+      const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
+      await db.createSession(sessionId, initial_prompt, 'learning', 'diagnosing', calibration);
+      await db.createMessage(sessionId, null, 'assistant', intakeResult.question);
+
+      return res.json({
+        sessionId,
+        intent: 'learning',
+        calibration,
+        diagnosticQuestion: intakeResult.question,
+        status: 'diagnosing',
+      });
+    }
+
+    if (intakeResult.status === 'light_response') {
+      const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
+      await db.createSession(sessionId, initial_prompt, intakeResult.intent, 'learning', calibration);
+      await db.createMessage(sessionId, null, 'assistant', intakeResult.response);
+
+      return res.json({
+        sessionId,
+        intent: intakeResult.intent,
+        calibration,
+        response: intakeResult.response,
+        status: 'light_response',
+      });
+    }
+
+    // Status: tree_created -> Convert tree skeleton to UI nodes and save to DB
+    const skeleton = intakeResult.tree;
+    const formattedNodes = mapTreeSkeletonToCurriculumNodes(sessionId, skeleton);
+
+    const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
+    await db.createSession(sessionId, initial_prompt, skeleton.goalSummary, 'learning', calibration);
+    await db.saveNodes(sessionId, formattedNodes);
+
+    const introMsg = `Curriculum verified for objective: "${skeleton.goalSummary}". Select any available node on the canvas to begin learning.`;
+    await db.createMessage(sessionId, null, 'assistant', introMsg);
+
+    return res.json({
       sessionId,
-      intent,
+      intent: skeleton.goalSummary,
       calibration,
-      diagnosticQuestion: question
+      diagnosticQuestion: introMsg,
+      status: 'learning',
+      nodes: formattedNodes,
     });
-
-  } catch (error) {
-    console.error('[server] Error starting session:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+  } catch (error: any) {
+    console.error('[server] Error in /api/sessions/start:', error);
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
 
 /**
- * Diagnose context-gathering turn
+ * POST /api/sessions/:id/diagnose: Diagnose turn handler
  */
 app.post('/api/sessions/:id/diagnose', async (req: Request, res: Response): Promise<any> => {
   try {
     const sessionId = req.params.id as string;
     const text = req.body.text as string;
-    
+
     const session = await db.getSession(sessionId);
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    // Save user message
     await db.createMessage(sessionId, null, 'user', text);
+    const learnerState = buildLearnerState(sessionId, session);
 
-    // Process turn with Diagnosis Agent
-    const diagnosisResult = await processDiagnosticTurn(session, text, '');
+    const intakeResult = await orchestrator.handleIntakeWorkflow(text, learnerState, []);
 
-    if (diagnosisResult.readyForPath) {
-      // Trigger Curriculum & Knowledge Graph Agent
-      const nodes = await generateCurriculum(diagnosisResult.summary!);
-      
-      // Associate session ID and write to DB
-      const formattedNodes: CurriculumNode[] = nodes.map(node => ({
-        ...node,
-        session_id: sessionId
-      })) as CurriculumNode[];
-      
-      await db.createNodes(formattedNodes);
+    if (intakeResult.status === 'tree_created') {
+      const formattedNodes = mapTreeSkeletonToCurriculumNodes(sessionId, intakeResult.tree);
+      await db.saveNodes(sessionId, formattedNodes);
       await db.updateSessionStatus(sessionId, 'learning');
-      
-      // Save path generation message
-      const finalMsg = diagnosisResult.feedback;
+
+      const finalMsg = `Curriculum tree drafted and verified. Select any available concept node to start learning!`;
       await db.createMessage(sessionId, null, 'assistant', finalMsg);
 
-      res.json({
+      return res.json({
         status: 'learning',
         response: finalMsg,
-        nodes: await db.getNodes(sessionId)
+        nodes: formattedNodes,
       });
     } else {
-      // Diagnostic continue
-      await db.createMessage(sessionId, null, 'assistant', diagnosisResult.feedback);
-      res.json({
+      const q = (intakeResult as any).question || (intakeResult as any).response || 'Could you provide a bit more detail on your specific learning objective?';
+      await db.createMessage(sessionId, null, 'assistant', q);
+      return res.json({
         status: 'diagnosing',
-        response: diagnosisResult.feedback
+        response: q,
       });
     }
-
-  } catch (error) {
+  } catch (error: any) {
     console.error('[server] Error processing diagnosis turn:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
 
 /**
- * Fetch full session details (including nodes and chat history)
+ * GET /api/sessions/:id: Fetch full session details (nodes, messages)
+ * STRICTLY READ-ONLY per REST & Phase 6 architectural specification. Zero side effects or generation triggers.
  */
 app.get('/api/sessions/:id', async (req: Request, res: Response): Promise<any> => {
   try {
@@ -201,63 +337,35 @@ app.get('/api/sessions/:id', async (req: Request, res: Response): Promise<any> =
     }
 
     const messages = await db.getMessages(sessionId);
-    let nodes = await db.getNodes(sessionId);
+    const nodes = await db.getNodes(sessionId);
 
-    // If session has no nodes yet, generate curriculum nodes so canvas is never blank
-    if (!nodes || nodes.length === 0) {
-      try {
-        let parsedCalibration: Calibration = { level: 'beginner', known_concepts: [], weak_points: [] };
-        if (session.calibration) {
-          try {
-            parsedCalibration = typeof session.calibration === 'string' ? JSON.parse(session.calibration) : session.calibration;
-          } catch (_) {}
-        }
-
-        const summary = {
-          userGoal: session.title,
-          intent: session.intent || 'learning',
-          extractedContext: '',
-          calibration: parsedCalibration
-        };
-        const generated = await generateCurriculum(summary);
-        const formattedNodes: CurriculumNode[] = generated.map(node => ({
-          ...node,
-          session_id: sessionId
-        })) as CurriculumNode[];
-        await db.createNodes(formattedNodes);
-        nodes = await db.getNodes(sessionId);
-      } catch (err) {
-        console.warn('[server] Non-blocking error lazy-building nodes:', err);
-      }
-    }
-
-    res.json({
+    return res.json({
       session,
       messages,
-      nodes
+      nodes,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('[server] Error fetching session:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
 
 /**
- * Delete session
+ * DELETE /api/sessions/:id: Delete session
  */
 app.delete('/api/sessions/:id', async (req: Request, res: Response): Promise<any> => {
   try {
     const sessionId = req.params.id as string;
     await db.deleteSession(sessionId);
-    res.json({ success: true });
-  } catch (error) {
+    return res.json({ success: true });
+  } catch (error: any) {
     console.error('[server] Error deleting session:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
 
 /**
- * Rename session title
+ * PATCH /api/sessions/:id: Rename session title
  */
 app.patch('/api/sessions/:id', async (req: Request, res: Response): Promise<any> => {
   try {
@@ -265,15 +373,15 @@ app.patch('/api/sessions/:id', async (req: Request, res: Response): Promise<any>
     const { title } = req.body;
     if (!title) return res.status(400).json({ error: 'Title is required' });
     await db.renameSession(sessionId, title);
-    res.json({ success: true });
-  } catch (error) {
+    return res.json({ success: true });
+  } catch (error: any) {
     console.error('[server] Error renaming session:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
 
 /**
- * Toggle star status for a history node chat
+ * POST /api/sessions/:id/nodes/:nodeId/star: Toggle node star status
  */
 app.post('/api/sessions/:id/nodes/:nodeId/star', async (req: Request, res: Response): Promise<any> => {
   try {
@@ -281,82 +389,99 @@ app.post('/api/sessions/:id/nodes/:nodeId/star', async (req: Request, res: Respo
     const nodeId = req.params.nodeId as string;
     const { isStarred } = req.body;
     await db.toggleStarNode(sessionId, nodeId, !!isStarred);
-    res.json({ success: true });
-  } catch (error) {
+    return res.json({ success: true });
+  } catch (error: any) {
     console.error('[server] Error starring node:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
 
 /**
- * Reset a history node thread
+ * POST /api/sessions/:id/nodes/:nodeId/reset: Reset concept thread
  */
 app.post('/api/sessions/:id/nodes/:nodeId/reset', async (req: Request, res: Response): Promise<any> => {
   try {
     const sessionId = req.params.id as string;
     const nodeId = req.params.nodeId as string;
     await db.resetNodeChat(sessionId, nodeId);
-    res.json({ success: true });
-  } catch (error) {
+    return res.json({ success: true });
+  } catch (error: any) {
     console.error('[server] Error resetting node chat:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
 
 /**
- * Get node-specific chat history
+ * GET /api/sessions/:id/nodes/:nodeId/chat: Get node-specific chat history
  */
 app.get('/api/sessions/:id/nodes/:nodeId/chat', async (req: Request, res: Response): Promise<any> => {
   try {
     const id = req.params.id as string;
     const nodeId = req.params.nodeId as string;
     const messages = await db.getMessages(id, nodeId);
-    res.json(messages);
-  } catch (error) {
+    return res.json(messages);
+  } catch (error: any) {
     console.error('[server] Error fetching node chat:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
 
 /**
- * Stream node teaching content
+ * GET /api/sessions/:id/nodes/:nodeId/teach: Lazy node content streaming
+ * Invokes Phase 3 Orchestrator handleOpenNodeWorkflow (TeachingAgent)
  */
 app.get('/api/sessions/:id/nodes/:nodeId/teach', async (req: Request, res: Response): Promise<any> => {
   try {
     const id = req.params.id as string;
     const nodeId = req.params.nodeId as string;
     const session = await db.getSession(id);
-    const nodes = await db.getNodes(id);
-    const node = nodes.find(n => n.id === nodeId);
-    
-    if (!session || !node) {
+    const dbNodes = await db.getNodes(id);
+    const targetDbNode = dbNodes.find((n) => n.id === nodeId);
+
+    if (!session || !targetDbNode) {
       return res.status(404).send('Session or Node not found');
     }
 
-    // Set streaming headers
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Transfer-Encoding', 'chunked');
 
-    let fullText = '';
-    
-    // Call teaching agent stream
-    await streamExplanation(node, session.calibration, (chunk) => {
-      fullText += chunk;
-      res.write(chunk);
-    });
+    const learnerState = buildLearnerState(id, session);
+    const mockTree: TreeSkeleton = {
+      treeId: `tree_${id}`,
+      learnerId: id,
+      goalSummary: session.title,
+      nodes: dbNodes.map((n) => ({
+        id: n.id,
+        title: n.title,
+        oneLineSummary: n.description || '',
+        goalRelevance: n.description || '',
+        prerequisiteIds: n.dependencies || [],
+        status: n.status === 'completed' ? 'mastered' : n.status === 'active' ? 'in_progress' : n.status,
+        content: null,
+        masteryScore: n.status === 'completed' ? 1.0 : 0.0,
+        depth: 0,
+      })),
+      edges: [],
+      verificationStatus: 'verified',
+      verificationNotes: [],
+      version: 1,
+    };
 
-    // Save full explanation message to the database
-    await db.createMessage(id, nodeId, 'assistant', fullText);
-    res.end();
+    const nodeContent = await orchestrator.handleOpenNodeWorkflow(mockTree, nodeId, learnerState);
+    const responseText = `${nodeContent.explanation}\n\n**Key Practice Applications:**\n${nodeContent.examples.map((ex) => `- ${ex}`).join('\n')}`;
 
-  } catch (error) {
+    res.write(responseText);
+    await db.createMessage(id, nodeId, 'assistant', responseText);
+    return res.end();
+  } catch (error: any) {
     console.error('[server] Error streaming teaching content:', error);
-    res.status(500).send('Streaming Failed');
+    return res.status(500).send('Streaming Failed');
   }
 });
 
 /**
- * Assess user answer for a concept node
+ * POST /api/sessions/:id/nodes/:nodeId/message: Node Assessment & Message Route
+ * Invokes Phase 3 Orchestrator handleNodeAssessmentWorkflow (AssessmentAgent + MemoryUpdateAgent)
  */
 app.post('/api/sessions/:id/nodes/:nodeId/message', async (req: Request, res: Response): Promise<any> => {
   try {
@@ -369,116 +494,95 @@ app.post('/api/sessions/:id/nodes/:nodeId/message', async (req: Request, res: Re
     }
 
     const session = await db.getSession(id);
-    const nodes = await db.getNodes(id);
-    const node = nodes.find(n => n.id === nodeId);
+    const dbNodes = await db.getNodes(id);
+    const targetDbNode = dbNodes.find((n) => n.id === nodeId);
 
-    if (!session || !node) {
+    if (!session || !targetDbNode) {
       return res.status(404).json({ error: 'Session or Node not found' });
     }
 
-    // 1. Classify intent of user node message: follow-up question or assessment answer
-    const messageIntent = await classifyMessageIntent(node, answer);
-    console.log(`[server] Node message intent classified as: ${messageIntent}`);
-
-    // Save user message to database
     await db.createMessage(id, nodeId, 'user', answer);
 
-    if (messageIntent === 'question') {
-      // Stream follow-up answer (chunked text)
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.setHeader('Transfer-Encoding', 'chunked');
+    const learnerState = buildLearnerState(id, session);
+    const mockTree: TreeSkeleton = {
+      treeId: `tree_${id}`,
+      learnerId: id,
+      goalSummary: session.title,
+      nodes: dbNodes.map((n) => ({
+        id: n.id,
+        title: n.title,
+        oneLineSummary: n.description || '',
+        goalRelevance: n.description || '',
+        prerequisiteIds: n.dependencies || [],
+        status: n.status === 'completed' ? 'mastered' : n.status === 'active' ? 'in_progress' : n.status,
+        content: null,
+        masteryScore: n.status === 'completed' ? 1.0 : 0.0,
+        depth: 0,
+      })),
+      edges: [],
+      verificationStatus: 'verified',
+      verificationNotes: [],
+      version: 1,
+    };
 
-      let fullText = '';
-      const chatHistory = await db.getMessages(id, nodeId);
-      
-      await streamFollowUpAnswer(node, session.calibration, chatHistory, (chunk) => {
-        fullText += chunk;
-        res.write(chunk);
-      });
+    const workflowResult = await orchestrator.handleNodeAssessmentWorkflow(
+      mockTree,
+      nodeId,
+      answer,
+      learnerState
+    );
 
-      // Save assistant answer to database
-      await db.createMessage(id, nodeId, 'assistant', fullText);
-      return res.end();
-    }
+    if (workflowResult.status === 'assessment_success') {
+      const { assessmentResult } = workflowResult;
 
-    // Otherwise, treat as an assessment answer
-    // Call assessment agent
-    const result = await assessAnswer(node, session.calibration, answer);
+      let feedbackText = assessmentResult.reasoning;
+      if (assessmentResult.detectedMisconceptions && assessmentResult.detectedMisconceptions.length > 0) {
+        feedbackText += `\n\n**Areas to refine:**\n${assessmentResult.detectedMisconceptions.map((m) => `- ${m}`).join('\n')}`;
+      }
 
-    // Save assessment feedback
-    await db.createMessage(id, nodeId, 'assistant', result.feedback);
+      await db.createMessage(id, nodeId, 'assistant', feedbackText);
 
-    let nodesUpdated = false;
-    let updatedNodes = nodes;
+      if (targetDbNode.status !== 'completed' && assessmentResult.readyToAdvance) {
+        await db.updateNodeStatus(id, nodeId, 'completed');
+      }
 
-    if (result.passed) {
-      // Mark current node as completed
-      await db.updateNodeStatus(id, nodeId, 'completed');
-      
-      // Update session calibration state
-      const currentCal = session.calibration;
-      if (result.calibration_update) {
-        // Simple level float update
-        const levels: ('beginner' | 'intermediate' | 'advanced')[] = ['beginner', 'intermediate', 'advanced'];
-        let lvlIdx = levels.indexOf(currentCal.level);
-        if (result.calibration_update.level_delta > 0 && lvlIdx < 2) {
-          lvlIdx++;
-          currentCal.level = levels[lvlIdx];
+      const updatedList = await db.getNodes(id);
+      const completedIds = updatedList.filter((n) => n.status === 'completed').map((n) => n.id);
+
+      for (const node of updatedList) {
+        if (node.status === 'locked') {
+          const allDepsMet = node.dependencies.every((depId) => completedIds.includes(depId));
+          if (allDepsMet) {
+            await db.updateNodeStatus(id, node.id, 'available');
+          }
         }
-        
-        // Add newly learned concepts
-        currentCal.known_concepts = [
-          ...new Set([...currentCal.known_concepts, ...result.calibration_update.add_known])
-        ];
-        
-        await db.updateSessionCalibration(id, currentCal);
       }
 
-      // Run deterministic unlocking rules for dependent nodes
-      await checkAndUnlockNodes(id);
-      
-      nodesUpdated = true;
-      updatedNodes = await db.getNodes(id);
+      const finalNodes = await db.getNodes(id);
+      return res.json({
+        passed: assessmentResult.readyToAdvance,
+        feedback: feedbackText,
+        nodesUpdated: true,
+        nodes: finalNodes,
+        calibration: session.calibration,
+        isAssessment: true,
+      });
+    } else {
+      await db.createMessage(id, nodeId, 'assistant', workflowResult.message);
+      return res.json({
+        passed: false,
+        feedback: workflowResult.message,
+        nodesUpdated: false,
+        nodes: dbNodes,
+        calibration: session.calibration,
+        isAssessment: true,
+      });
     }
-
-    const updatedSession = await db.getSession(id);
-
-    res.json({
-      passed: result.passed,
-      feedback: result.feedback,
-      nodesUpdated,
-      nodes: updatedNodes,
-      calibration: updatedSession!.calibration,
-      isAssessment: true
-    });
-
-  } catch (error) {
+  } catch (error: any) {
     console.error('[server] Error processing node message:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
-
-app.post('/api/sessions/:id/nodes/:nodeId/assess', (req: Request, res: Response) => {
-  res.redirect(307, `/api/sessions/${req.params.id}/nodes/${req.params.nodeId}/message`);
-});
-
-/**
- * Deterministic Graph Traversal for Node Unlocking
- * If all dependencies of a locked node are 'completed', mark it as 'available'.
- */
-async function checkAndUnlockNodes(sessionId: string): Promise<void> {
-  const list = await db.getNodes(sessionId);
-  const completedIds = list.filter(n => n.status === 'completed').map(n => n.id);
-  
-  for (const node of list) {
-    if (node.status === 'locked') {
-      const allDepsMet = node.dependencies.every(depId => completedIds.includes(depId));
-      if (allDepsMet) {
-        await db.updateNodeStatus(sessionId, node.id, 'available');
-      }
-    }
-  }
-}
 
 // Global Error Handling Middleware
 app.use((err: any, req: Request, res: Response, next: any) => {
@@ -487,11 +591,10 @@ app.use((err: any, req: Request, res: Response, next: any) => {
     return next(err);
   }
   res.status(err.status || 500).json({
-    error: err.message || 'Internal Server Error'
+    error: err.message || 'Internal Server Error',
   });
 });
 
-// Start Server
 app.listen(port, () => {
   console.log(`Klaivo Express backend running on http://localhost:${port}`);
 });
