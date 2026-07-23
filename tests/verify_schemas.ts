@@ -62,10 +62,10 @@ function runTests() {
       {
         sessionId: "sess_1",
         timestamp: new Date().toISOString(),
-        goalSummary: "Introduced Alkanes",
         nodesCovered: ["node_alkanes"],
-        keyTakeaways: ["Understood IUPAC nomenclature for alkanes"],
-        confusionFlagsResolved: [],
+        masteryChanges: [{ nodeId: "node_alkanes", delta: 0.8 }],
+        persistentMisconceptions: [],
+        nextRecommendedFocus: "Alkenes and unsaturated hydrocarbons",
       },
     ],
   };

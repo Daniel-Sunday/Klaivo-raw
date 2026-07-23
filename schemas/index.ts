@@ -22,13 +22,19 @@ export const MasteryMapEntrySchema = z.object({
 });
 export type MasteryMapEntry = z.infer<typeof MasteryMapEntrySchema>;
 
+export const MasteryChangeSchema = z.object({
+  nodeId: z.string(),
+  delta: z.number(),
+});
+export type MasteryChange = z.infer<typeof MasteryChangeSchema>;
+
 export const SessionSummarySchema = z.object({
   sessionId: z.string(),
   timestamp: z.string(),
-  goalSummary: z.string(),
-  nodesCovered: z.array(z.string()),
-  keyTakeaways: z.array(z.string()),
-  confusionFlagsResolved: z.array(z.string()),
+  nodesCovered: z.array(z.string()).default([]),
+  masteryChanges: z.array(MasteryChangeSchema).default([]),
+  persistentMisconceptions: z.array(z.string()).default([]),
+  nextRecommendedFocus: z.string().min(1, "nextRecommendedFocus required"),
 });
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
@@ -144,7 +150,6 @@ export type RefinementDiff = z.infer<typeof RefinementDiffSchema>;
 export function validateRefinementDiff(diffData: unknown, currentTree: TreeSkeleton): RefinementDiff {
   const diff = RefinementDiffSchema.parse(diffData);
 
-  // Non-negotiable rule: Mastered nodes must NEVER be removed
   const masteredNodeIds = new Set(
     currentTree.nodes
       .filter((n) => n.status === "mastered")

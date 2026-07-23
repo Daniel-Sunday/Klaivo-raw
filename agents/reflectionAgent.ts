@@ -18,17 +18,18 @@ export async function runReflectionAgent(
 
 CRITICAL RULES:
 1. Be genuinely compressive. Do NOT generate bloated transcripts.
-2. PRESERVE STRUGGLE & MISCONCEPTION SIGNALS. Highlight resolved vs ongoing confusion flags.
-3. List key takeaways and nodes covered clearly.
+2. PRESERVE STRUGGLE & MISCONCEPTION SIGNALS in "persistentMisconceptions".
+3. Track exact "nodesCovered" and "masteryChanges" [{ "nodeId": string, "delta": number }].
+4. Provide a clear, actionable "nextRecommendedFocus".
 
 Output must match SessionSummary Schema:
 {
   "sessionId": string,
   "timestamp": ISO timestamp string,
-  "goalSummary": string,
   "nodesCovered": string[],
-  "keyTakeaways": string[],
-  "confusionFlagsResolved": string[]
+  "masteryChanges": Array<{ "nodeId": string, "delta": number }>,
+  "persistentMisconceptions": string[],
+  "nextRecommendedFocus": string
 }`;
 
   const userPrompt = `Session ID: ${input.sessionId}
@@ -50,10 +51,10 @@ Sample Log Actions: ${input.recentLogs.map((l) => `${l.agentName} (${l.validatio
       ? () => ({
           sessionId: input.sessionId,
           timestamp: new Date().toISOString(),
-          goalSummary: input.goalSummary,
-          nodesCovered: mockOutput.nodesCovered || ["node_1"],
-          keyTakeaways: mockOutput.keyTakeaways || ["Mastered core IUPAC naming rules."],
-          confusionFlagsResolved: mockOutput.confusionFlagsResolved || ["Resolved numbering direction misconception."],
+          nodesCovered: mockOutput.nodesCovered || ["node_alkanes"],
+          masteryChanges: mockOutput.masteryChanges || [{ nodeId: "node_alkanes", delta: 0.4 }],
+          persistentMisconceptions: mockOutput.persistentMisconceptions || [],
+          nextRecommendedFocus: mockOutput.nextRecommendedFocus || "Proceed to Alkenes & Unsaturated Hydrocarbons",
         })
       : undefined,
   });

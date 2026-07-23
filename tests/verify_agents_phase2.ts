@@ -263,14 +263,15 @@ async function runPhase2UnitTests() {
       },
       {
         nodesCovered: [sampleNode.id],
-        keyTakeaways: ["Mastered IUPAC alkane naming rules"],
-        confusionFlagsResolved: ["Resolved alkane vs alkene bond confusion"],
+        masteryChanges: [{ nodeId: sampleNode.id, delta: 0.4 }],
+        persistentMisconceptions: [],
+        nextRecommendedFocus: "Alkenes & unsaturated hydrocarbons",
       }
     );
     assert(
       reflectionResult.output.sessionId === "sess_1001" &&
-        reflectionResult.output.keyTakeaways.length > 0,
-      "2.9 Reflection Agent - Generates compressive SessionSummary preserving struggle signal"
+        reflectionResult.output.nextRecommendedFocus.length > 0,
+      "2.9 Reflection Agent - Generates compressive SessionSummary matching updated schema"
     );
 
     console.log(`\nAll Phase 2 Agent Unit Tests Completed Successfully!`);
