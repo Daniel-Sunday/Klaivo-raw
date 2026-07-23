@@ -21,17 +21,6 @@ async function runPhase3OrchestrationTests() {
     }
   }
 
-  async function assertThrowsAsync(fn: () => Promise<any>, testName: string) {
-    try {
-      await fn();
-      console.error(`[FAIL] ${testName} (Expected exception but none was thrown)`);
-      failed++;
-    } catch (e: any) {
-      console.log(`[PASS] ${testName} (Caught expected error: ${e.message.split('\n')[0]})`);
-      passed++;
-    }
-  }
-
   const orchestrator = new KlaivoOrchestrator();
 
   const baseLearnerState: LearnerState = {
@@ -185,14 +174,21 @@ async function runPhase3OrchestrationTests() {
     );
 
     assert(
-      assessmentWorkflowResult.tree.nodes.find((n) => n.id === firstNode.id)?.status === "mastered",
-      "6a. Assessment Workflow - Evaluated response and marked target node 'mastered'"
+      assessmentWorkflowResult.status === "assessment_success",
+      "6a. Assessment Workflow - Processed assessment successfully"
     );
 
-    assert(
-      assessmentWorkflowResult.tree.nodes.find((n) => n.id === lockedNode.id)?.status === "available",
-      "6b. Unconditional Prerequisite Unlocking - Automatically unlocked downstream node dependent on mastered prerequisite"
-    );
+    if (assessmentWorkflowResult.status === "assessment_success") {
+      assert(
+        assessmentWorkflowResult.tree.nodes.find((n: TreeNode) => n.id === firstNode.id)?.status === "mastered",
+        "6b. Assessment Workflow - Marked target node 'mastered'"
+      );
+
+      assert(
+        assessmentWorkflowResult.tree.nodes.find((n: TreeNode) => n.id === lockedNode.id)?.status === "available",
+        "6c. Unconditional Prerequisite Unlocking - Automatically unlocked downstream node dependent on mastered prerequisite"
+      );
+    }
 
     // ----------------------------------------------------
     // Test 7: Refinement Workflow & Mastered Node Protection
@@ -207,16 +203,16 @@ async function runPhase3OrchestrationTests() {
       "7a. Refinement Workflow - Processed diff and incremented tree version to 2"
     );
 
-    await assertThrowsAsync(
-      async () => {
-        await orchestrator.handleRefinementWorkflow(
-          { treeId: activeTree.treeId, learnerFeedback: "Remove mastered node", targetNodeId: null },
-          activeTree,
-          activeState,
-          { removedNodeIds: [firstNode.id] } // Attempting to remove mastered node!
-        );
-      },
-      "7b. Refinement Guardrail - Prohibits removing MASTERED node in refinement diff"
+    const attemptedRemovalResult = await orchestrator.handleRefinementWorkflow(
+      { treeId: activeTree.treeId, learnerFeedback: "Remove mastered node", targetNodeId: null },
+      activeTree,
+      activeState,
+      { removedNodeIds: [firstNode.id] }
+    );
+
+    assert(
+      attemptedRemovalResult.nodes.some((n) => n.id === firstNode.id && n.status === "mastered"),
+      "7b. Refinement Guardrail - Sanitizes diff and preserves MASTERED node in tree"
     );
 
     // ----------------------------------------------------

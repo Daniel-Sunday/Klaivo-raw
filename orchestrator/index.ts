@@ -8,7 +8,6 @@ import {
   RefinementDiff,
   SessionSummary,
   AgentLog,
-  validateRefinementDiff,
   validateAssessmentResult,
 } from '../schemas';
 import { runIntentAgent, IntentAgentOutput } from '../agents/intentAgent';
@@ -20,20 +19,26 @@ import { runAssessmentAgent } from '../agents/assessmentAgent';
 import { runMemoryUpdateAgent } from '../agents/memoryUpdateAgent';
 import { runRefinementAgent } from '../agents/refinementAgent';
 import { runReflectionAgent } from '../agents/reflectionAgent';
+import { createStarterSkeleton, sanitizeRefinementDiff, sanitizeUserErrorMessage } from '../utils/errorHandling';
 
 export type IntakeWorkflowResult =
   | { status: 'needs_clarification'; question: string; intentOutput: IntentAgentOutput }
   | { status: 'light_response'; intent: string; response: string }
   | { status: 'needs_more_context'; question: string; diagnosisOutput: DiagnosisAgentOutput }
-  | { status: 'tree_created'; tree: TreeSkeleton; learnerState: LearnerState };
+  | { status: 'tree_created'; tree: TreeSkeleton; learnerState: LearnerState; isFallback?: boolean };
+
+export type AssessmentWorkflowResult =
+  | { status: 'assessment_success'; assessmentResult: AssessmentResult; updatedState: LearnerState; tree: TreeSkeleton }
+  | { status: 'assessment_rejected'; message: string; currentState: LearnerState };
 
 export class KlaivoOrchestrator {
   /**
-   * 3.1 & 3.2 Primary Intake Workflow
+   * 3.1 & 3.2 Primary Intake Workflow with Phase 4 Error Fallbacks
    * Enforces:
    * Guardrail 1: Intent Confidence Gate (<0.6 halt)
    * Guardrail 2: Short-circuit non-tree intents (quick_answer, problem_solving, research)
    * Guardrail 3: Diagnosis Needs-More-Context Gate (halt before Drafter)
+   * Fallback: Curriculum Drafter exhaustion -> Minimal starter skeleton (3-5 nodes)
    */
   public async handleIntakeWorkflow(
     userMessage: string,
@@ -55,7 +60,7 @@ export class KlaivoOrchestrator {
     if (intentResult.output.confidence < 0.6 || intentResult.output.needsClarification) {
       return {
         status: 'needs_clarification',
-        question: 'Could you clarify whether you want a quick answer, a structured learning path, or help solving a specific problem?',
+        question: sanitizeUserErrorMessage('IntentAgent', 'Low confidence'),
         intentOutput: intentResult.output,
       };
     }
@@ -86,7 +91,7 @@ export class KlaivoOrchestrator {
     if (diagnosisResult.output.needsMoreContext) {
       return {
         status: 'needs_more_context',
-        question: diagnosisResult.output.clarifyingQuestion || 'Could you provide more specific details about your end goal?',
+        question: diagnosisResult.output.clarifyingQuestion || sanitizeUserErrorMessage('DiagnosisAgent', 'Vague goal'),
         diagnosisOutput: diagnosisResult.output,
       };
     }
@@ -94,34 +99,49 @@ export class KlaivoOrchestrator {
     // Update LearnerState currentGoal with validated objective
     learnerState.currentGoal = diagnosisResult.output.currentGoal;
 
-    // Step 3: Curriculum Drafter
+    // Step 3: Curriculum Drafter with Phase 4 Fallback
     const treeId = `tree_${Date.now()}`;
-    const drafterResult = await runCurriculumDrafter(
-      {
-        treeId,
-        learnerId: learnerState.learnerId,
-        currentGoal: learnerState.currentGoal,
-        vocabularyLevel: learnerState.vocabularyLevel,
-        masteryMap: learnerState.masteryMap,
-      },
-      mockOverrides?.skeleton
-    );
+    let skeleton: TreeSkeleton;
+    let isFallback = false;
 
-    // Step 4: Curriculum Verifier
-    const verifierResult = await runCurriculumVerifier({
-      skeleton: drafterResult.output,
-    });
+    try {
+      const drafterResult = await runCurriculumDrafter(
+        {
+          treeId,
+          learnerId: learnerState.learnerId,
+          currentGoal: learnerState.currentGoal,
+          vocabularyLevel: learnerState.vocabularyLevel,
+          masteryMap: learnerState.masteryMap,
+        },
+        mockOverrides?.skeleton
+      );
+      skeleton = drafterResult.output;
+    } catch (drafterErr: any) {
+      // 4.2 Fallback: Return starter skeleton on drafter failure
+      skeleton = createStarterSkeleton(learnerState.currentGoal, learnerState.learnerId);
+      isFallback = true;
+    }
+
+    // Step 4: Curriculum Verifier (Non-blocking fallback)
+    try {
+      const verifierResult = await runCurriculumVerifier({ skeleton });
+      skeleton = verifierResult.output;
+    } catch (verifierErr: any) {
+      // 4.2 Fallback: Non-blocking fallback to verified_with_gaps
+      skeleton.verificationStatus = 'verified_with_gaps';
+      skeleton.verificationNotes.push('Verification skipped due to reference search unavailability.');
+    }
 
     return {
       status: 'tree_created',
-      tree: verifierResult.output,
+      tree: skeleton,
       learnerState,
+      isFallback,
     };
   }
 
   /**
    * 3.4 Lazy Loading Node Content Workflow
-   * Enforces: Content is generated ONLY on demand when learner opens node, then cached.
    */
   public async handleOpenNodeWorkflow(
     tree: TreeSkeleton,
@@ -133,78 +153,96 @@ export class KlaivoOrchestrator {
       throw new Error(`Orchestration error: Node "${nodeId}" not found in tree "${tree.treeId}".`);
     }
 
-    // Return cached content if present
     if (node.content) {
       return node.content;
     }
 
     const confusionFlags = learnerState.masteryMap[nodeId]?.confusionFlags || [];
-    const teachingResult = await runTeachingAgent({
-      learnerId: learnerState.learnerId,
-      node,
-      vocabularyLevel: learnerState.vocabularyLevel,
-      confusionFlags,
-    });
+    try {
+      const teachingResult = await runTeachingAgent({
+        learnerId: learnerState.learnerId,
+        node,
+        vocabularyLevel: learnerState.vocabularyLevel,
+        confusionFlags,
+      });
 
-    // Cache content on node
-    node.content = teachingResult.output;
-    return teachingResult.output;
+      node.content = teachingResult.output;
+      return teachingResult.output;
+    } catch (teachingErr: any) {
+      // 4.2 Teaching Agent Fallback: Plain content fallback
+      const fallbackContent: NodeContent = {
+        nodeId,
+        explanation: `Core overview for ${node.title}: ${node.oneLineSummary}`,
+        examples: [`Key practical focus for ${node.title}`],
+        generatedAt: new Date().toISOString(),
+        vocabularyLevelUsed: learnerState.vocabularyLevel,
+      };
+      node.content = fallbackContent;
+      return fallbackContent;
+    }
   }
 
   /**
-   * 3.1 Step 8-9 Node Assessment & Unconditional Prerequisite Unlocking Workflow
-   * Enforces:
-   * Guardrail: Unconditional Prerequisite Unlocking after ANY state update to masteryMap.
+   * 3.1 & 4.2 Assessment Workflow with Rejection Guardrail
+   * Enforces: Out-of-bounds or invalid AssessmentResult is 100% rejected (0 state mutation).
    */
   public async handleNodeAssessmentWorkflow(
     tree: TreeSkeleton,
     nodeId: string,
     learnerResponse: string,
     learnerState: LearnerState
-  ): Promise<{ assessmentResult: AssessmentResult; updatedState: LearnerState; tree: TreeSkeleton }> {
+  ): Promise<AssessmentWorkflowResult> {
     const node = tree.nodes.find((n) => n.id === nodeId);
     if (!node) {
       throw new Error(`Orchestration error: Node "${nodeId}" not found in tree "${tree.treeId}".`);
     }
 
     const priorMastery = learnerState.masteryMap[nodeId] || null;
-    const assessmentRes = await runAssessmentAgent({
-      learnerId: learnerState.learnerId,
-      node,
-      learnerResponse,
-      priorMastery,
-    });
 
-    // Validate assessment result
-    const validatedAssessment = validateAssessmentResult(assessmentRes.output, tree);
+    try {
+      const assessmentRes = await runAssessmentAgent({
+        learnerId: learnerState.learnerId,
+        node,
+        learnerResponse,
+        priorMastery,
+      });
 
-    // Apply Memory Update
-    const { updatedState } = runMemoryUpdateAgent(validatedAssessment, learnerState);
+      // Strict validation: Reject if invalid (e.g. nodeId missing or masteryDelta out of [-1, 1])
+      const validatedAssessment = validateAssessmentResult(assessmentRes.output, tree);
 
-    // Update node mastery score and status
-    const currentMastery = updatedState.masteryMap[nodeId]?.level || 0.0;
-    node.masteryScore = currentMastery;
+      // Apply Memory Update
+      const { updatedState } = runMemoryUpdateAgent(validatedAssessment, learnerState);
 
-    if (currentMastery >= 0.8 || validatedAssessment.readyToAdvance) {
-      node.status = 'mastered';
-    } else {
-      node.status = 'in_progress';
+      const currentMastery = updatedState.masteryMap[nodeId]?.level || 0.0;
+      node.masteryScore = currentMastery;
+
+      if (currentMastery >= 0.8 || validatedAssessment.readyToAdvance) {
+        node.status = 'mastered';
+      } else {
+        node.status = 'in_progress';
+      }
+
+      // Unconditional Prerequisite Unlocking Gate
+      this.unlockPrerequisiteNodes(tree);
+
+      return {
+        status: 'assessment_success',
+        assessmentResult: validatedAssessment,
+        updatedState,
+        tree,
+      };
+    } catch (err: any) {
+      // 4.2 Assessment Agent Fallback: Reject entirely, 0 state mutation
+      return {
+        status: 'assessment_rejected',
+        message: sanitizeUserErrorMessage('AssessmentAgent', err.message),
+        currentState: learnerState,
+      };
     }
-
-    // UNCONDITIONAL PREREQUISITE UNLOCKING GATE:
-    // Check all currently locked nodes and unlock any node whose prerequisites are now all 'mastered'.
-    this.unlockPrerequisiteNodes(tree);
-
-    return {
-      assessmentResult: validatedAssessment,
-      updatedState,
-      tree,
-    };
   }
 
   /**
-   * 3.3 Refinement Workflow
-   * Enforces: Hard code validation preventing removal of mastered nodes.
+   * 3.3 & 4.2 Refinement Workflow with Mastered Node Sanitization Fallback
    */
   public async handleRefinementWorkflow(
     request: RefinementRequest,
@@ -212,39 +250,47 @@ export class KlaivoOrchestrator {
     learnerState: LearnerState,
     mockOutput?: Partial<RefinementDiff>
   ): Promise<TreeSkeleton> {
-    const refinementRes = await runRefinementAgent(
-      {
-        request,
-        currentTree,
-        masteryMap: learnerState.masteryMap,
-      },
-      mockOutput
-    );
+    let diff: RefinementDiff;
 
-    const diff = refinementRes.output;
+    try {
+      const refinementRes = await runRefinementAgent(
+        {
+          request,
+          currentTree,
+          masteryMap: learnerState.masteryMap,
+        },
+        mockOutput
+      );
+      diff = refinementRes.output;
+    } catch (err: any) {
+      // If refinement agent produced an invalid diff in mock/agent execution, sanitize it
+      diff = {
+        treeId: currentTree.treeId,
+        addedNodes: [],
+        removedNodeIds: [],
+        modifiedNodes: [],
+        newVersion: currentTree.version + 1,
+      };
+    }
 
-    // Validate diff via validateRefinementDiff
-    validateRefinementDiff(diff, currentTree);
+    // 4.2 Refinement Fallback: Sanitize diff to ensure no mastered node is ever removed
+    const sanitizedDiff = sanitizeRefinementDiff(diff, currentTree);
 
-    // Apply diff
-    const removedSet = new Set(diff.removedNodeIds);
+    const removedSet = new Set(sanitizedDiff.removedNodeIds);
     let updatedNodes = currentTree.nodes.filter((n) => !removedSet.has(n.id));
 
-    // Update modified nodes
-    for (const modNode of diff.modifiedNodes) {
+    for (const modNode of sanitizedDiff.modifiedNodes) {
       const idx = updatedNodes.findIndex((n) => n.id === modNode.id);
       if (idx >= 0) {
         updatedNodes[idx] = modNode;
       }
     }
 
-    // Add new nodes
-    updatedNodes.push(...diff.addedNodes);
+    updatedNodes.push(...sanitizedDiff.addedNodes);
 
     currentTree.nodes = updatedNodes;
-    currentTree.version = diff.newVersion;
+    currentTree.version = sanitizedDiff.newVersion;
 
-    // Re-evaluate prerequisite unlocking after tree modification
     this.unlockPrerequisiteNodes(currentTree);
 
     return currentTree;
@@ -258,21 +304,32 @@ export class KlaivoOrchestrator {
     learnerState: LearnerState,
     recentLogs: AgentLog[]
   ): Promise<{ summary: SessionSummary; learnerState: LearnerState }> {
-    const reflectionRes = await runReflectionAgent({
-      sessionId,
-      learnerId: learnerState.learnerId,
-      recentLogs,
-      masteryMap: learnerState.masteryMap,
-      goalSummary: learnerState.currentGoal.specificObjective || learnerState.currentGoal.rawStatement,
-    });
+    try {
+      const reflectionRes = await runReflectionAgent({
+        sessionId,
+        learnerId: learnerState.learnerId,
+        recentLogs,
+        masteryMap: learnerState.masteryMap,
+        goalSummary: learnerState.currentGoal.specificObjective || learnerState.currentGoal.rawStatement,
+      });
 
-    learnerState.sessionHistory.push(reflectionRes.output);
-    return { summary: reflectionRes.output, learnerState };
+      learnerState.sessionHistory.push(reflectionRes.output);
+      return { summary: reflectionRes.output, learnerState };
+    } catch (err: any) {
+      // Fallback session summary
+      const fallbackSummary: SessionSummary = {
+        sessionId,
+        timestamp: new Date().toISOString(),
+        nodesCovered: Object.keys(learnerState.masteryMap),
+        masteryChanges: [],
+        persistentMisconceptions: [],
+        nextRecommendedFocus: "Continue next available topic in curriculum",
+      };
+      learnerState.sessionHistory.push(fallbackSummary);
+      return { summary: fallbackSummary, learnerState };
+    }
   }
 
-  /**
-   * Helper: Unconditional Prerequisite Unlocking Engine
-   */
   private unlockPrerequisiteNodes(tree: TreeSkeleton): void {
     const masteredIds = new Set(
       tree.nodes.filter((n) => n.status === 'mastered').map((n) => n.id)
