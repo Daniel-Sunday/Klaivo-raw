@@ -4,13 +4,13 @@ import * as path from 'path';
 import * as fs from 'fs';
 import dotenv from 'dotenv';
 import { Session, CurriculumNode, Message, Calibration } from './types';
+import { AgentLog } from './schemas';
 
 dotenv.config();
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// Use Supabase if valid credentials are provided (and not placeholder text)
 const isSupabaseConfigured =
   supabaseUrl &&
   supabaseServiceRoleKey &&
@@ -21,7 +21,6 @@ let supabase: SupabaseClient | null = null;
 let sqliteDb: any = null;
 
 if (isSupabaseConfigured) {
-  // Service role key bypasses Row Level Security for backend server access
   supabase = createClient(supabaseUrl!, supabaseServiceRoleKey!);
   console.log('[Database] Using Supabase Postgres backend.');
 } else {
@@ -36,7 +35,6 @@ if (isSupabaseConfigured) {
 
 export async function initDb(): Promise<void> {
   if (supabase) {
-    // Ping Supabase to verify connectivity
     const { error } = await supabase.from('sessions').select('id').limit(1);
     if (error && error.code !== 'PGRST116') {
       console.warn('[Database] Note on Supabase sessions table query:', error.message);
@@ -44,7 +42,6 @@ export async function initDb(): Promise<void> {
       console.log('[Database] Supabase connection established.');
     }
   } else {
-    // Create local SQLite tables
     sqliteDb.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -73,7 +70,6 @@ export async function initDb(): Promise<void> {
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);
-    // Ensure is_starred column exists if table was created earlier
     try {
       sqliteDb.exec(`ALTER TABLE nodes ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0`);
     } catch (_) {}
@@ -88,153 +84,227 @@ export async function initDb(): Promise<void> {
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);
-    console.log('[Database] SQLite tables initialized.');
-
-    // Preload default learning sessions & history if database is empty
-    const count = sqliteDb.prepare('SELECT COUNT(*) as cnt FROM sessions').get() as { cnt: number };
-    if (count.cnt === 0) {
-      const seed1 = 'seed-waec-chem';
-      const seed2 = 'seed-calculus';
-      const seed3 = 'seed-python';
-
-      const cal = JSON.stringify({ level: 'beginner', known_concepts: [], weak_points: [] });
-      sqliteDb.prepare('INSERT INTO sessions (id, title, intent, status, calibration) VALUES (?, ?, ?, ?, ?)').run(seed1, 'Prepare me for WAEC Chemistry — Organic Chemistry section', 'learning', 'learning', cal);
-      sqliteDb.prepare('INSERT INTO sessions (id, title, intent, status, calibration) VALUES (?, ?, ?, ?, ?)').run(seed2, 'Help me understand Calculus — differentiation and integration', 'learning', 'learning', cal);
-      sqliteDb.prepare('INSERT INTO sessions (id, title, intent, status, calibration) VALUES (?, ?, ?, ?, ?)').run(seed3, 'Teach me Python programming from scratch', 'learning', 'learning', cal);
-
-      sqliteDb.prepare('INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('node-1', seed1, 'Intro & Hybridization', 'Carbon hybridization and orbital geometry', 100, 100, '[]', 'completed', 0);
-      sqliteDb.prepare('INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('node-2', seed1, 'IUPAC Nomenclature', 'Naming alkanes, alkenes, and functional groups', 250, 100, '["node-1"]', 'active', 1);
-
-      sqliteDb.prepare('INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('node-3', seed2, 'Derivatives & Limits', 'Fundamental rate of change', 100, 100, '[]', 'completed', 0);
-      sqliteDb.prepare('INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('node-4', seed2, 'Integration Techniques', 'Definite and indefinite integrals', 250, 100, '["node-3"]', 'active', 1);
-
-      sqliteDb.prepare('INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('node-5', seed3, 'Python Basics & Control Flow', 'Variables, loops, and conditions', 100, 100, '[]', 'completed', 0);
-
-      console.log('[Database] Preloaded initial learning sessions and history.');
-    }
+    sqliteDb.exec(`
+      CREATE TABLE IF NOT EXISTS agent_logs (
+        log_id TEXT PRIMARY KEY,
+        agent_name TEXT NOT NULL,
+        learner_id TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        input TEXT NOT NULL,
+        output TEXT NOT NULL,
+        reasoning TEXT,
+        validation_passed INTEGER NOT NULL,
+        retry_count INTEGER NOT NULL
+      )
+    `);
   }
 }
 
-// --- DB Helpers ---
-
 export async function createSession(
-  id: string,
-  title: string,
-  intent: string,
-  calibration: Calibration = { level: 'beginner', known_concepts: [], weak_points: [] }
+  idOrSession: any,
+  title?: string,
+  intent?: string,
+  calibrationOrStatus?: any,
+  calibrationParam?: any
 ): Promise<Session> {
+  let sessionObj: Omit<Session, 'created_at' | 'updated_at'>;
+
+  if (typeof idOrSession === 'object' && idOrSession !== null) {
+    sessionObj = idOrSession;
+  } else {
+    sessionObj = {
+      id: idOrSession,
+      title: title || 'Learning Session',
+      intent: intent || 'learning',
+      status: (typeof calibrationOrStatus === 'string' ? calibrationOrStatus : 'diagnosing') as 'diagnosing' | 'learning',
+      calibration: typeof calibrationOrStatus === 'object' ? calibrationOrStatus : calibrationParam || { level: 'beginner', known_concepts: [], weak_points: [] },
+    };
+  }
+
+  const calJson = JSON.stringify(sessionObj.calibration);
   if (supabase) {
     const { data, error } = await supabase
       .from('sessions')
       .insert({
-        id,
-        title,
-        intent,
-        status: 'diagnosing',
-        calibration
+        id: sessionObj.id,
+        title: sessionObj.title,
+        intent: sessionObj.intent,
+        status: sessionObj.status,
+        calibration: calJson,
       })
-      .select('*')
+      .select()
       .single();
-
-    if (error) {
-      throw new Error(`[Supabase] Error creating session: ${error.message}`);
-    }
-    return data as Session;
+    if (error) throw new Error(`[Supabase] Error creating session: ${error.message}`);
+    return {
+      ...data,
+      calibration: typeof data.calibration === 'string' ? JSON.parse(data.calibration) : data.calibration,
+    };
   } else {
-    const stmt = sqliteDb.prepare(`
-      INSERT INTO sessions (id, title, intent, status, calibration)
-      VALUES (?, ?, ?, 'diagnosing', ?)
-    `);
-    stmt.run(id, title, intent, JSON.stringify(calibration));
-    const session = await getSession(id);
-    if (!session) {
-      throw new Error(`Failed to create session with id: ${id}`);
-    }
-    return session;
+    sqliteDb
+      .prepare('INSERT INTO sessions (id, title, intent, status, calibration) VALUES (?, ?, ?, ?, ?)')
+      .run(sessionObj.id, sessionObj.title, sessionObj.intent, sessionObj.status, calJson);
+    return getSession(sessionObj.id) as Promise<Session>;
   }
 }
 
-export async function getSession(id: string): Promise<Session | undefined> {
+export async function getSession(id: string): Promise<Session | null> {
   if (supabase) {
-    const { data, error } = await supabase
-      .from('sessions')
-      .select('*')
-      .eq('id', id)
-      .single();
-
-    if (error || !data) return undefined;
-    return data as Session;
+    const { data, error } = await supabase.from('sessions').select('*').eq('id', id).single();
+    if (error || !data) return null;
+    return {
+      ...data,
+      calibration: typeof data.calibration === 'string' ? JSON.parse(data.calibration) : data.calibration,
+    };
   } else {
-    const session = sqliteDb.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as any;
-    if (session) {
-      session.calibration = typeof session.calibration === 'string'
-        ? JSON.parse(session.calibration)
-        : session.calibration;
-    }
-    return session as Session | undefined;
+    const row = sqliteDb.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
+    if (!row) return null;
+    return {
+      ...row,
+      calibration: JSON.parse(row.calibration),
+    };
   }
 }
 
-export async function getAllSessionsWithNodes(): Promise<(Session & { nodes: CurriculumNode[] })[]> {
+export async function updateSession(id: string, updates: Partial<Omit<Session, 'id'>>): Promise<void> {
+  const dbUpdates: any = { ...updates, updated_at: new Date().toISOString() };
+  if (updates.calibration) {
+    dbUpdates.calibration = JSON.stringify(updates.calibration);
+  }
   if (supabase) {
-    const { data: sessionsData, error: sErr } = await supabase
-      .from('sessions')
-      .select('*')
-      .order('updated_at', { ascending: false });
-
-    if (sErr || !sessionsData) return [];
-
-    const result: (Session & { nodes: CurriculumNode[] })[] = [];
-    for (const session of sessionsData) {
-      const nodes = await getNodes(session.id);
-      result.push({
-        ...(session as Session),
-        nodes
-      });
-    }
-    return result;
+    const { error } = await supabase.from('sessions').update(dbUpdates).eq('id', id);
+    if (error) throw new Error(`[Supabase] Error updating session: ${error.message}`);
   } else {
-    const rawSessions = sqliteDb.prepare('SELECT * FROM sessions ORDER BY updated_at DESC').all() as any[];
-    const result: (Session & { nodes: CurriculumNode[] })[] = [];
-    for (const session of rawSessions) {
-      session.calibration = typeof session.calibration === 'string'
-        ? JSON.parse(session.calibration)
-        : session.calibration;
-      const nodes = await getNodes(session.id);
-      result.push({
-        ...session,
-        nodes
-      });
-    }
-    return result;
+    const fields = Object.keys(dbUpdates)
+      .map((key) => `${key} = ?`)
+      .join(', ');
+    const values = Object.values(dbUpdates);
+    sqliteDb.prepare(`UPDATE sessions SET ${fields} WHERE id = ?`).run(...values, id);
   }
 }
 
 export async function updateSessionStatus(id: string, status: 'diagnosing' | 'learning'): Promise<void> {
-  if (supabase) {
-    const { error } = await supabase
-      .from('sessions')
-      .update({ status, updated_at: new Date().toISOString() })
-      .eq('id', id);
-
-    if (error) throw new Error(`[Supabase] Error updating status: ${error.message}`);
-  } else {
-    const stmt = sqliteDb.prepare('UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
-    stmt.run(status, id);
-  }
+  await updateSession(id, { status });
 }
 
 export async function updateSessionCalibration(id: string, calibration: Calibration): Promise<void> {
+  await updateSession(id, { calibration });
+}
+
+export async function getSessions(): Promise<Session[]> {
+  if (supabase) {
+    const { data, error } = await supabase.from('sessions').select('*').order('created_at', { ascending: false });
+    if (error) throw new Error(`[Supabase] Error getting sessions: ${error.message}`);
+    return (data || []).map((row: any) => ({
+      ...row,
+      calibration: typeof row.calibration === 'string' ? JSON.parse(row.calibration) : row.calibration,
+    }));
+  } else {
+    const rows = sqliteDb.prepare('SELECT * FROM sessions ORDER BY created_at DESC').all();
+    return rows.map((row: any) => ({
+      ...row,
+      calibration: JSON.parse(row.calibration),
+    }));
+  }
+}
+
+export async function getAllSessionsWithNodes(): Promise<{ session: Session; nodes: CurriculumNode[] }[]> {
+  const sessions = await getSessions();
+  const results: { session: Session; nodes: CurriculumNode[] }[] = [];
+  for (const session of sessions) {
+    const nodes = await getNodes(session.id);
+    results.push({ session, nodes });
+  }
+  return results;
+}
+
+export async function saveNodes(sessionId: string, nodes: Omit<CurriculumNode, 'created_at'>[]): Promise<void> {
+  if (supabase) {
+    const rows = nodes.map((node) => ({
+      id: node.id,
+      session_id: sessionId,
+      title: node.title,
+      description: node.description,
+      x: node.x,
+      y: node.y,
+      dependencies: JSON.stringify(node.dependencies),
+      status: node.status,
+      order_index: node.order_index,
+    }));
+    const { error } = await supabase.from('nodes').upsert(rows);
+    if (error) throw new Error(`[Supabase] Error saving nodes: ${error.message}`);
+  } else {
+    const stmt = sqliteDb.prepare(`
+      INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id, session_id) DO UPDATE SET
+        title=excluded.title,
+        description=excluded.description,
+        x=excluded.x,
+        y=excluded.y,
+        dependencies=excluded.dependencies,
+        status=excluded.status,
+        order_index=excluded.order_index
+    `);
+    const transaction = sqliteDb.transaction((nodesToSave: any[]) => {
+      for (const node of nodesToSave) {
+        stmt.run(
+          node.id,
+          sessionId,
+          node.title,
+          node.description,
+          node.x,
+          node.y,
+          JSON.stringify(node.dependencies),
+          node.status,
+          node.order_index
+        );
+      }
+    });
+    transaction(nodes);
+  }
+}
+
+export async function createNodes(sessionIdOrNodes: any, nodesParam?: any): Promise<void> {
+  const sessionId = typeof sessionIdOrNodes === 'string' ? sessionIdOrNodes : (Array.isArray(sessionIdOrNodes) && sessionIdOrNodes[0]?.session_id) || 'session_legacy';
+  const nodes = Array.isArray(sessionIdOrNodes) ? sessionIdOrNodes : nodesParam || [];
+  await saveNodes(sessionId, nodes);
+}
+
+export async function getNodes(sessionId: string): Promise<CurriculumNode[]> {
+  if (supabase) {
+    const { data, error } = await supabase
+      .from('nodes')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('order_index', { ascending: true });
+    if (error) throw new Error(`[Supabase] Error getting nodes: ${error.message}`);
+    return (data || []).map((row: any) => ({
+      ...row,
+      dependencies: typeof row.dependencies === 'string' ? JSON.parse(row.dependencies) : row.dependencies,
+    }));
+  } else {
+    const rows = sqliteDb
+      .prepare('SELECT * FROM nodes WHERE session_id = ? ORDER BY order_index ASC')
+      .all(sessionId);
+    return rows.map((row: any) => ({
+      ...row,
+      dependencies: JSON.parse(row.dependencies),
+    }));
+  }
+}
+
+export async function updateNodeStatus(sessionId: string, nodeId: string, status: string): Promise<void> {
   if (supabase) {
     const { error } = await supabase
-      .from('sessions')
-      .update({ calibration, updated_at: new Date().toISOString() })
-      .eq('id', id);
-
-    if (error) throw new Error(`[Supabase] Error updating calibration: ${error.message}`);
+      .from('nodes')
+      .update({ status })
+      .eq('session_id', sessionId)
+      .eq('id', nodeId);
+    if (error) throw new Error(`[Supabase] Error updating node status: ${error.message}`);
   } else {
-    const stmt = sqliteDb.prepare('UPDATE sessions SET calibration = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
-    stmt.run(JSON.stringify(calibration), id);
+    sqliteDb
+      .prepare('UPDATE nodes SET status = ? WHERE session_id = ? AND id = ?')
+      .run(status, sessionId, nodeId);
   }
 }
 
@@ -251,150 +321,53 @@ export async function createMessage(
         session_id: sessionId,
         node_id: nodeId,
         sender,
-        content
+        content,
       })
-      .select('*')
+      .select()
       .single();
-
     if (error) throw new Error(`[Supabase] Error creating message: ${error.message}`);
-    return data as Message;
+    return data;
   } else {
-    const stmt = sqliteDb.prepare(`
-      INSERT INTO messages (session_id, node_id, sender, content)
-      VALUES (?, ?, ?, ?)
-    `);
-    const result = stmt.run(sessionId, nodeId, sender, content);
-    return { id: Number(result.lastInsertRowid), session_id: sessionId, node_id: nodeId, sender, content };
+    const info = sqliteDb
+      .prepare('INSERT INTO messages (session_id, node_id, sender, content) VALUES (?, ?, ?, ?)')
+      .run(sessionId, nodeId, sender, content);
+    return {
+      id: info.lastInsertRowid,
+      session_id: sessionId,
+      node_id: nodeId,
+      sender,
+      content,
+      created_at: new Date().toISOString(),
+    };
   }
 }
 
-export async function getMessages(sessionId: string, nodeId: string | null = null): Promise<Message[]> {
+export async function getMessages(sessionId: string, nodeId?: string | null): Promise<Message[]> {
   if (supabase) {
-    let query = supabase
-      .from('messages')
-      .select('*')
-      .eq('session_id', sessionId)
-      .order('created_at', { ascending: true });
-
-    if (nodeId) {
-      query = query.eq('node_id', nodeId);
-    } else {
-      query = query.is('node_id', null);
-    }
-
-    const { data, error } = await query;
-    if (error) throw new Error(`[Supabase] Error fetching messages: ${error.message}`);
-    return data as Message[];
-  } else {
-    if (nodeId) {
-      return sqliteDb.prepare('SELECT * FROM messages WHERE session_id = ? AND node_id = ? ORDER BY created_at ASC').all(sessionId, nodeId) as Message[];
-    } else {
-      return sqliteDb.prepare('SELECT * FROM messages WHERE session_id = ? AND node_id IS NULL ORDER BY created_at ASC').all(sessionId) as Message[];
-    }
-  }
-}
-
-export async function createNodes(nodesList: CurriculumNode[]): Promise<void> {
-  if (supabase) {
-    const formattedNodes = nodesList.map(n => ({
-      id: n.id,
-      session_id: n.session_id,
-      title: n.title,
-      description: n.description || '',
-      x: n.x,
-      y: n.y,
-      dependencies: n.dependencies || [],
-      status: n.status || 'locked',
-      order_index: n.order_index
-    }));
-
-    const { error } = await supabase
-      .from('nodes')
-      .insert(formattedNodes);
-
-    if (error) throw new Error(`[Supabase] Error creating nodes: ${error.message}`);
-  } else {
-    const insert = sqliteDb.prepare(`
-      INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index)
-      VALUES (@id, @session_id, @title, @description, @x, @y, @dependencies, @status, @order_index)
-    `);
-
-    const insertMany = sqliteDb.transaction((list: CurriculumNode[]) => {
-      for (const node of list) {
-        insert.run({
-          id: node.id,
-          session_id: node.session_id,
-          title: node.title,
-          description: node.description || '',
-          x: node.x,
-          y: node.y,
-          dependencies: JSON.stringify(node.dependencies || []),
-          status: node.status || 'locked',
-          order_index: node.order_index
-        });
+    let query = supabase.from('messages').select('*').eq('session_id', sessionId);
+    if (nodeId !== undefined) {
+      if (nodeId === null) {
+        query = query.is('node_id', null);
+      } else {
+        query = query.eq('node_id', nodeId);
       }
-    });
-
-    insertMany(nodesList);
-  }
-}
-
-export async function getNodes(sessionId: string): Promise<CurriculumNode[]> {
-  let nodesList: CurriculumNode[] = [];
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('nodes')
-      .select('*')
-      .eq('session_id', sessionId)
-      .order('order_index', { ascending: true });
-
-    if (!error && data) {
-      nodesList = data as CurriculumNode[];
     }
-  }
-  
-  if (nodesList.length === 0 && sqliteDb) {
-    const list = sqliteDb.prepare('SELECT * FROM nodes WHERE session_id = ? ORDER BY order_index ASC').all(sessionId) as any[];
-    nodesList = list.map(node => {
-      node.dependencies = typeof node.dependencies === 'string'
-        ? JSON.parse(node.dependencies)
-        : node.dependencies;
-      return node as CurriculumNode;
-    });
-  }
-
-  if (sqliteDb && nodesList.length > 0) {
-    try {
-      const localList = sqliteDb.prepare('SELECT id, session_id, is_starred FROM nodes WHERE is_starred = 1').all() as any[];
-      const starMap: Record<string, boolean> = {};
-      localList.forEach(l => { starMap[`${l.session_id}:${l.id}`] = true; });
-      nodesList.forEach(n => {
-        if (starMap[`${sessionId}:${n.id}`]) {
-          (n as any).is_starred = 1;
-        }
-      });
-    } catch (_) {}
-  }
-
-  return nodesList;
-}
-
-export async function updateNodeStatus(
-  sessionId: string,
-  nodeId: string,
-  status: 'locked' | 'available' | 'completed' | 'active'
-): Promise<void> {
-  if (supabase) {
-    const { error } = await supabase
-      .from('nodes')
-      .update({ status })
-      .eq('session_id', sessionId)
-      .eq('id', nodeId);
-
-    if (error) throw new Error(`[Supabase] Error updating node status: ${error.message}`);
+    const { data, error } = await query.order('created_at', { ascending: true });
+    if (error) throw new Error(`[Supabase] Error getting messages: ${error.message}`);
+    return data || [];
   } else {
-    const stmt = sqliteDb.prepare('UPDATE nodes SET status = ? WHERE session_id = ? AND id = ?');
-    stmt.run(status, sessionId, nodeId);
+    let sql = 'SELECT * FROM messages WHERE session_id = ?';
+    const params: any[] = [sessionId];
+    if (nodeId !== undefined) {
+      if (nodeId === null) {
+        sql += ' AND node_id IS NULL';
+      } else {
+        sql += ' AND node_id = ?';
+        params.push(nodeId);
+      }
+    }
+    sql += ' ORDER BY created_at ASC';
+    return sqliteDb.prepare(sql).all(...params);
   }
 }
 
@@ -456,6 +429,43 @@ export async function resetNodeChat(sessionId: string, nodeId: string): Promise<
     try {
       sqliteDb.prepare('DELETE FROM messages WHERE session_id = ? AND node_id = ?').run(sessionId, nodeId);
       sqliteDb.prepare('UPDATE nodes SET status = ? WHERE session_id = ? AND id = ?').run('available', sessionId, nodeId);
+    } catch (_) {}
+  }
+}
+
+export async function saveAgentLog(log: AgentLog): Promise<void> {
+  if (supabase) {
+    try {
+      await supabase.from('agent_logs').insert({
+        log_id: log.logId,
+        agent_name: log.agentName,
+        learner_id: log.learnerId,
+        timestamp: log.timestamp,
+        input: JSON.stringify(log.input),
+        output: JSON.stringify(log.output),
+        reasoning: log.reasoning,
+        validation_passed: log.validationPassed ? 1 : 0,
+        retry_count: log.retryCount,
+      });
+    } catch (_) {}
+  } else if (sqliteDb) {
+    try {
+      sqliteDb
+        .prepare(`
+          INSERT INTO agent_logs (log_id, agent_name, learner_id, timestamp, input, output, reasoning, validation_passed, retry_count)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          log.logId,
+          log.agentName,
+          log.learnerId,
+          log.timestamp,
+          JSON.stringify(log.input),
+          JSON.stringify(log.output),
+          log.reasoning || null,
+          log.validationPassed ? 1 : 0,
+          log.retryCount
+        );
     } catch (_) {}
   }
 }

@@ -117,7 +117,6 @@ export class KlaivoOrchestrator {
       );
       skeleton = drafterResult.output;
     } catch (drafterErr: any) {
-      // 4.2 Fallback: Return starter skeleton on drafter failure
       skeleton = createStarterSkeleton(learnerState.currentGoal, learnerState.learnerId);
       isFallback = true;
     }
@@ -127,7 +126,6 @@ export class KlaivoOrchestrator {
       const verifierResult = await runCurriculumVerifier({ skeleton });
       skeleton = verifierResult.output;
     } catch (verifierErr: any) {
-      // 4.2 Fallback: Non-blocking fallback to verified_with_gaps
       skeleton.verificationStatus = 'verified_with_gaps';
       skeleton.verificationNotes.push('Verification skipped due to reference search unavailability.');
     }
@@ -169,7 +167,6 @@ export class KlaivoOrchestrator {
       node.content = teachingResult.output;
       return teachingResult.output;
     } catch (teachingErr: any) {
-      // 4.2 Teaching Agent Fallback: Plain content fallback
       const fallbackContent: NodeContent = {
         nodeId,
         explanation: `Core overview for ${node.title}: ${node.oneLineSummary}`,
@@ -184,7 +181,6 @@ export class KlaivoOrchestrator {
 
   /**
    * 3.1 & 4.2 Assessment Workflow with Rejection Guardrail
-   * Enforces: Out-of-bounds or invalid AssessmentResult is 100% rejected (0 state mutation).
    */
   public async handleNodeAssessmentWorkflow(
     tree: TreeSkeleton,
@@ -207,10 +203,7 @@ export class KlaivoOrchestrator {
         priorMastery,
       });
 
-      // Strict validation: Reject if invalid (e.g. nodeId missing or masteryDelta out of [-1, 1])
       const validatedAssessment = validateAssessmentResult(assessmentRes.output, tree);
-
-      // Apply Memory Update
       const { updatedState } = runMemoryUpdateAgent(validatedAssessment, learnerState);
 
       const currentMastery = updatedState.masteryMap[nodeId]?.level || 0.0;
@@ -222,7 +215,6 @@ export class KlaivoOrchestrator {
         node.status = 'in_progress';
       }
 
-      // Unconditional Prerequisite Unlocking Gate
       this.unlockPrerequisiteNodes(tree);
 
       return {
@@ -232,7 +224,6 @@ export class KlaivoOrchestrator {
         tree,
       };
     } catch (err: any) {
-      // 4.2 Assessment Agent Fallback: Reject entirely, 0 state mutation
       return {
         status: 'assessment_rejected',
         message: sanitizeUserErrorMessage('AssessmentAgent', err.message),
@@ -263,14 +254,21 @@ export class KlaivoOrchestrator {
       );
       diff = refinementRes.output;
     } catch (err: any) {
-      // If refinement agent produced an invalid diff in mock/agent execution, sanitize it
-      diff = {
-        treeId: currentTree.treeId,
-        addedNodes: [],
-        removedNodeIds: [],
-        modifiedNodes: [],
-        newVersion: currentTree.version + 1,
-      };
+      diff = mockOutput
+        ? ({
+            treeId: currentTree.treeId,
+            addedNodes: mockOutput.addedNodes || [],
+            removedNodeIds: mockOutput.removedNodeIds || [],
+            modifiedNodes: mockOutput.modifiedNodes || [],
+            newVersion: (mockOutput.newVersion || currentTree.version) + 1,
+          } as RefinementDiff)
+        : {
+            treeId: currentTree.treeId,
+            addedNodes: [],
+            removedNodeIds: [],
+            modifiedNodes: [],
+            newVersion: currentTree.version + 1,
+          };
     }
 
     // 4.2 Refinement Fallback: Sanitize diff to ensure no mastered node is ever removed
@@ -316,14 +314,13 @@ export class KlaivoOrchestrator {
       learnerState.sessionHistory.push(reflectionRes.output);
       return { summary: reflectionRes.output, learnerState };
     } catch (err: any) {
-      // Fallback session summary
       const fallbackSummary: SessionSummary = {
         sessionId,
         timestamp: new Date().toISOString(),
         nodesCovered: Object.keys(learnerState.masteryMap),
         masteryChanges: [],
         persistentMisconceptions: [],
-        nextRecommendedFocus: "Continue next available topic in curriculum",
+        nextRecommendedFocus: 'Continue next available topic in curriculum',
       };
       learnerState.sessionHistory.push(fallbackSummary);
       return { summary: fallbackSummary, learnerState };
