@@ -202,6 +202,13 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
       sessionHistory: [],
     };
 
+    // ─── PIPELINE START ──────────────────────────────────────────
+    console.log(`\n${'═'.repeat(60)}`);
+    console.log(`🚀 KLAIVO INTAKE PIPELINE — NEW GOAL SUBMITTED`);
+    console.log(`   Goal: "${initial_prompt.slice(0, 100)}"`);
+    console.log(`   Session: ${sessionId}`);
+    console.log(`${'═'.repeat(60)}`);
+
     // Execute Phase 3 Orchestrator Intake Pipeline
     const intakeResult = await orchestrator.handleIntakeWorkflow(
       initial_prompt,
@@ -209,12 +216,15 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
       contextArtifacts
     );
 
-    // Save prompt message to DB
-    await db.createMessage(sessionId, null, 'user', initial_prompt);
+    console.log(`\n${'═'.repeat(60)}`);
+    console.log(`✅ PIPELINE COMPLETE — status: ${intakeResult.status}`);
+    console.log(`${'═'.repeat(60)}\n`);
 
     if (intakeResult.status === 'needs_clarification') {
       const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
       await db.createSession(sessionId, initial_prompt, 'learning', 'diagnosing', calibration);
+      if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
+      await db.createMessage(sessionId, null, 'user', initial_prompt);
       await db.createMessage(sessionId, null, 'assistant', intakeResult.question);
 
       return res.json({
@@ -229,6 +239,8 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
     if (intakeResult.status === 'needs_more_context') {
       const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
       await db.createSession(sessionId, initial_prompt, 'learning', 'diagnosing', calibration);
+      if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
+      await db.createMessage(sessionId, null, 'user', initial_prompt);
       await db.createMessage(sessionId, null, 'assistant', intakeResult.question);
 
       return res.json({
@@ -243,6 +255,8 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
     if (intakeResult.status === 'light_response') {
       const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
       await db.createSession(sessionId, initial_prompt, intakeResult.intent, 'learning', calibration);
+      if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
+      await db.createMessage(sessionId, null, 'user', initial_prompt);
       await db.createMessage(sessionId, null, 'assistant', intakeResult.response);
 
       return res.json({
@@ -260,7 +274,9 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
 
     const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
     await db.createSession(sessionId, initial_prompt, skeleton.goalSummary, 'learning', calibration);
+    if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
     await db.saveNodes(sessionId, formattedNodes);
+    await db.createMessage(sessionId, null, 'user', initial_prompt);
 
     const introMsg = `Curriculum verified for objective: "${skeleton.goalSummary}". Select any available node on the canvas to begin learning.`;
     await db.createMessage(sessionId, null, 'assistant', introMsg);
@@ -295,14 +311,18 @@ app.post('/api/sessions/:id/diagnose', async (req: Request, res: Response): Prom
     await db.createMessage(sessionId, null, 'user', text);
     const learnerState = buildLearnerState(sessionId, session);
 
-    const intakeResult = await orchestrator.handleIntakeWorkflow(text, learnerState, []);
+    const intakeResult = await orchestrator.handleIntakeWorkflow(text, learnerState, [], session.slot_state);
+
+    if (intakeResult.slotState) {
+      await db.updateSessionSlotState(sessionId, intakeResult.slotState);
+    }
 
     if (intakeResult.status === 'tree_created') {
       const formattedNodes = mapTreeSkeletonToCurriculumNodes(sessionId, intakeResult.tree);
       await db.saveNodes(sessionId, formattedNodes);
       await db.updateSessionStatus(sessionId, 'learning');
 
-      const finalMsg = `Curriculum tree drafted and verified. Select any available concept node to start learning!`;
+      const finalMsg = `Curriculum tree drafted and verified for: "${intakeResult.tree.goalSummary}". Select any available concept node to start learning!`;
       await db.createMessage(sessionId, null, 'assistant', finalMsg);
 
       return res.json({

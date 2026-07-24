@@ -72,11 +72,11 @@ export const TreeNodeSchema = z.object({
   title: z.string().min(1, "title required"),
   oneLineSummary: z.string().min(1, "oneLineSummary required"),
   goalRelevance: z.string().min(1, "goalRelevance is REQUIRED per spec non-negotiables"),
-  prerequisiteIds: z.array(z.string()).default([]),
-  status: NodeStatusSchema,
-  content: NodeContentSchema.nullable().default(null),
-  masteryScore: z.number().min(0.0).max(1.0).default(0.0),
-  depth: z.number().int().min(0).default(0),
+  prerequisiteIds: z.array(z.string()).optional().default([]),
+  status: NodeStatusSchema.optional().default("locked"),
+  content: NodeContentSchema.nullable().optional().default(null),
+  masteryScore: z.number().min(0.0).max(1.0).optional().default(0.0),
+  depth: z.number().int().min(0).optional().default(0),
 });
 export type TreeNode = z.infer<typeof TreeNodeSchema>;
 
@@ -182,3 +182,146 @@ export const AgentLogSchema = z.object({
   retryCount: z.number().int().min(0).default(0),
 });
 export type AgentLog = z.infer<typeof AgentLogSchema>;
+
+// ==========================================
+// 1.7 Intake Diagnosis Slot-Filling Schemas
+// ==========================================
+
+export const IntakeSlotKeySchema = z.enum([
+  'targetSubject',
+  'targetLevelOrOutcome',
+  'priorKnowledge',
+  'practicalFocus',
+]);
+export type IntakeSlotKey = z.infer<typeof IntakeSlotKeySchema>;
+
+export const ProposedSlotEntrySchema = z.object({
+  value: z.string().min(1, "slot value cannot be empty"),
+  isCorrection: z.boolean().default(false),
+  reasoning: z.string().optional(),
+});
+export type ProposedSlotEntry = z.infer<typeof ProposedSlotEntrySchema>;
+
+export const BlockedOverwriteEntrySchema = z.object({
+  slotKey: z.string(),
+  attemptedValue: z.string(),
+  existingValue: z.string(),
+  timestamp: z.string(),
+});
+export type BlockedOverwriteEntry = z.infer<typeof BlockedOverwriteEntrySchema>;
+
+export const DiagnosisSlotStateSchema = z.object({
+  slotsResolved: z.record(z.string(), z.string()).default({}),
+  slotsStillNeeded: z.array(z.string()).default([
+    'targetSubject',
+    'targetLevelOrOutcome',
+    'priorKnowledge',
+  ]),
+  roundCount: z.number().int().min(0).default(0),
+  forceProceedTriggered: z.boolean().default(false),
+  blockedOverwrites: z.array(BlockedOverwriteEntrySchema).default([]),
+});
+export type DiagnosisSlotState = z.infer<typeof DiagnosisSlotStateSchema>;
+
+export const DiagnosisAgentOutputSchema = z.object({
+  needsMoreContext: z.boolean(),
+  userRequestsProceed: z.boolean().default(false),
+  clarifyingQuestion: z.string().nullable().optional(),
+  proposedSlots: z.record(z.string(), ProposedSlotEntrySchema).default({}),
+  unfilledSlotKeys: z.array(z.string()).default([]),
+  reasoning: z.string().min(1, "reasoning required"),
+  currentGoal: LearnerGoalSchema.default({
+    rawStatement: "Learning Session",
+    domain: "General",
+    specificObjective: "Master core concepts",
+    contextArtifacts: [],
+  }),
+  intent: z.string().optional(),
+});
+export type DiagnosisAgentOutput = z.infer<typeof DiagnosisAgentOutputSchema>;
+
+export interface SlotUpdateResult {
+  updatedState: DiagnosisSlotState;
+  finalNeedsMoreContext: boolean;
+  finalClarifyingQuestion?: string;
+  synthesizedGoal: string;
+  newBlockedOverwrites: BlockedOverwriteEntry[];
+}
+
+export function processSlotUpdate(
+  currentState: DiagnosisSlotState,
+  proposedSlots: Record<string, ProposedSlotEntry>,
+  userRequestsProceed: boolean,
+  modelNeedsMoreContext: boolean,
+  modelClarifyingQuestion?: string | null
+): SlotUpdateResult {
+  const newRoundCount = currentState.roundCount + 1;
+  const newBlockedOverwrites: BlockedOverwriteEntry[] = [];
+  const updatedSlotsResolved = { ...currentState.slotsResolved };
+
+  const isForceProceed = currentState.forceProceedTriggered || userRequestsProceed;
+
+  // 1. Overwrite protection logic
+  for (const [key, proposedEntry] of Object.entries(proposedSlots || {})) {
+    const existingValue = updatedSlotsResolved[key];
+
+    if (existingValue && existingValue !== proposedEntry.value) {
+      if (!proposedEntry.isCorrection) {
+        const blockedEntry: BlockedOverwriteEntry = {
+          slotKey: key,
+          attemptedValue: proposedEntry.value,
+          existingValue,
+          timestamp: new Date().toISOString(),
+        };
+        newBlockedOverwrites.push(blockedEntry);
+        console.warn(
+          `[SlotGuard] Blocked unauthorized overwrite for slot "${key}". Preserved: "${existingValue}", Rejected: "${proposedEntry.value}"`
+        );
+        continue;
+      }
+    }
+
+    if (proposedEntry.value && proposedEntry.value.trim().length > 0) {
+      updatedSlotsResolved[key] = proposedEntry.value.trim();
+    }
+  }
+
+  const allRequiredKeys = ['targetSubject', 'targetLevelOrOutcome', 'priorKnowledge'];
+  const remainingNeeded = allRequiredKeys.filter((k) => !updatedSlotsResolved[k]);
+
+  // 2. Hard Cap (3 rounds max) & Force Proceed Rule
+  const maxRoundsReached = newRoundCount >= 3;
+  const shouldFinalize = maxRoundsReached || isForceProceed || remainingNeeded.length === 0;
+
+  const finalNeedsMoreContext = !shouldFinalize;
+  const finalClarifyingQuestion = finalNeedsMoreContext
+    ? modelClarifyingQuestion || `Could you clarify your ${remainingNeeded[0]}?`
+    : undefined;
+
+  // 3. Build objective strictly from validated slots
+  const subject = updatedSlotsResolved.targetSubject || 'Target Subject';
+  const outcome = updatedSlotsResolved.targetLevelOrOutcome ? ` for ${updatedSlotsResolved.targetLevelOrOutcome}` : '';
+  const prior = updatedSlotsResolved.priorKnowledge ? ` (Learner baseline: ${updatedSlotsResolved.priorKnowledge})` : '';
+  const focus = updatedSlotsResolved.practicalFocus ? ` Focus: ${updatedSlotsResolved.practicalFocus}.` : '';
+  const synthesizedGoal = `Master ${subject}${outcome}.${focus}${prior}`.trim();
+
+  const accumulatedBlockedOverwrites = [
+    ...currentState.blockedOverwrites,
+    ...newBlockedOverwrites,
+  ];
+
+  return {
+    updatedState: {
+      slotsResolved: updatedSlotsResolved,
+      slotsStillNeeded: finalNeedsMoreContext ? remainingNeeded : [],
+      roundCount: newRoundCount,
+      forceProceedTriggered: isForceProceed,
+      blockedOverwrites: accumulatedBlockedOverwrites,
+    },
+    finalNeedsMoreContext,
+    finalClarifyingQuestion,
+    synthesizedGoal,
+    newBlockedOverwrites,
+  };
+}
+

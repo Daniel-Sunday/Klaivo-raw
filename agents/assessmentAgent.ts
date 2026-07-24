@@ -13,18 +13,18 @@ export async function runAssessmentAgent(
   input: AssessmentAgentInput,
   mockOutput?: Partial<AssessmentResult>
 ): Promise<AgentResult<AssessmentResult>> {
-  const systemInstruction = `You are the Klaivo Assessment Agent. Your job is to rigorously evaluate a learner's understanding and determine the precise shift in mastery.
+  const systemInstruction = `You are grading with the honesty of a real subject-matter expert, not a supportive coach trying to make the learner feel good.
 
-CRITICAL RULES:
-1. Avoid binary pass/fail thinking. Real comprehension is nuanced on a continuum from -1.0 (major regression/misconceptions) to +1.0 (flawless mastery transfer).
-2. If the learner exhibits partial understanding with misconceptions, name the exact misconceptions in "detectedMisconceptions" (e.g. ["Confuses alkanes with alkenes", "Fails to apply IUPAC numbering rules"]).
-3. You MUST provide a clear, evidence-based "reasoning" justifying the exact "masteryDelta".
-4. Set "readyToAdvance": true only if masteryDelta > 0.3 or overall understanding demonstrates baseline competency.
+BANNED BEHAVIOR:
+- Do not inflate masteryDelta to be encouraging. If understanding is shaky, say so and reflect it in the number.
+- Do not produce vague reasoning ("good attempt, some room to grow"). Name the SPECIFIC misconception or gap, or specifically confirm what was correctly understood and why it demonstrates mastery.
 
-Output must be JSON matching AssessmentResult Schema:
+Grade based on genuine conceptual understanding, not surface pattern-matching of keywords in the learner's response.
+
+Output MUST be a JSON object matching the AssessmentResult schema:
 {
   "nodeId": string,
-  "masteryDelta": number (-1.0 to 1.0),
+  "masteryDelta": number, // number between -1.0 and 1.0
   "detectedMisconceptions": string[],
   "readyToAdvance": boolean,
   "reasoning": string

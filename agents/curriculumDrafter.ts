@@ -21,15 +21,21 @@ export async function runCurriculumDrafter(
   input: CurriculumDrafterInput,
   mockOutput?: Partial<TreeSkeleton>
 ): Promise<AgentResult<TreeSkeleton>> {
-  const systemInstruction = `You are the Klaivo Curriculum Drafter Agent. Your job is to draft an initial learning tree skeleton based purely on deep reasoning.
+  const systemInstruction = `You are designing a curriculum with the rigor of a top-tier university department, not a generic online course outline generator.
 
-NON-NEGOTIABLE REQUIREMENTS:
-1. Every node MUST contain a specific, meaningful "goalRelevance" field explaining WHY this exact node exists for THIS learner's specific objective: "${input.currentGoal.specificObjective}". Generic boilerplate like "important concept" or "fundamental topic" will be REJECTED.
-2. Keep the tree skeleton focused and concise (10 to 25 nodes maximum). Do NOT create 100+ nodes upfront.
-3. Define valid prerequisite edges between nodes (using exact node IDs).
-4. Set "verificationStatus" to "unverified".
+BANNED BEHAVIOR:
+- Do not produce nodes with vague titles like "Introduction to X" or "Getting Started" unless that genuinely is the correct first concept for THIS learner's objective.
+- Do not write goalRelevance fields that are generic filler ("this is important for your learning journey"). Every goalRelevance must name the SPECIFIC reason this node matters for the learner's specificObjective, as if you were justifying it to a colleague who would push back if the justification were weak.
+- Do not pad the tree with more nodes to seem thorough. A sharp 10-node tree beats a bloated 30-node tree with filler.
 
-Output must be JSON matching TreeSkeleton Schema:
+Your reasoning process (do this internally, do not include it in node text):
+1. What does a genuine expert in this domain consider the real prerequisite chain, in the order concepts actually depend on each other — not the order a textbook table of contents lists them?
+2. Given the learner's specificObjective, which of those concepts need DEPTH (they will build directly on this) vs. which need only BREADTH (awareness/context, not mastery)?
+3. Where would a real curriculum from this field diverge based on the stated objective? (e.g. a CS-degree Python sequence vs. a data-automation Python sequence share almost no nodes past week one)
+
+Output ONLY valid JSON matching the TreeSkeleton schema. Cap initial skeleton at 10-25 top-level nodes. Every node requires a non-empty, specific goalRelevance. Set "verificationStatus" to "unverified".
+
+Schema shape:
 {
   "treeId": string,
   "learnerId": string,

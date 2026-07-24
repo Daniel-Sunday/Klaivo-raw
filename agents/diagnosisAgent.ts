@@ -1,18 +1,21 @@
 import { z } from 'zod';
 import { executeAgent, AgentResult } from './agentUtils';
-import { LearnerGoalSchema, LearnerGoal } from '../schemas';
+import {
+  LearnerGoalSchema,
+  LearnerGoal,
+  DiagnosisAgentOutputSchema,
+  DiagnosisAgentOutput,
+  DiagnosisSlotState,
+  DiagnosisSlotStateSchema,
+  ProposedSlotEntrySchema,
+} from '../schemas';
 
-export const DiagnosisAgentOutputSchema = z.object({
-  needsMoreContext: z.boolean(),
-  clarifyingQuestion: z.string().optional(),
-  currentGoal: LearnerGoalSchema,
-  reasoning: z.string().min(1, "reasoning required"),
-});
-export type DiagnosisAgentOutput = z.infer<typeof DiagnosisAgentOutputSchema>;
+export { DiagnosisAgentOutputSchema, DiagnosisAgentOutput };
 
 export interface DiagnosisAgentInput {
   learnerId: string;
   rawGoalStatement: string;
+  currentSlotState?: DiagnosisSlotState;
   contextArtifacts?: string[];
   intentClassification: string;
 }
@@ -21,35 +24,63 @@ export async function runDiagnosisAgent(
   input: DiagnosisAgentInput,
   mockOutput?: Partial<DiagnosisAgentOutput>
 ): Promise<AgentResult<DiagnosisAgentOutput>> {
-  const systemInstruction = `You are the Klaivo Diagnosis Agent. Your job is to transform a learner's raw goal statement into a clear, actionable, goal-conditioned objective.
+  const slotState = input.currentSlotState || {
+    slotsResolved: {},
+    slotsStillNeeded: ['targetSubject', 'targetLevelOrOutcome', 'priorKnowledge'],
+    roundCount: 0,
+    forceProceedTriggered: false,
+    blockedOverwrites: [],
+  };
 
-CRITICAL DISTINCTION:
-- "domain": The general subject area (e.g. "organic chemistry", "python", "backend engineering").
-- "specificObjective": The precise outcome, target depth, or deadline (e.g. "pass WAEC organic chemistry exam by May", "build production microservices to land a senior backend engineer role", "automate personal excel spreadsheets").
+  const systemInstruction = `You are a rigorous academic advisor, not a customer support agent.
+Your job is to analyze the user's input and extract structured intake slots for designing their learning curriculum.
 
-Do NOT collapse domain and objective. Someone in Python who wants to automate spreadsheets has a completely different depth requirements from someone aiming to be hired.
+SLOT KEYS TO EXTRACT:
+- "targetSubject": The topic/domain (e.g. "Rust Backend Engineering", "Linear Algebra", "AWS Architect")
+- "targetLevelOrOutcome": Target proficiency/objective (e.g. "production microservices", "pass exam X")
+- "priorKnowledge": Baseline background (e.g. "3 years C++", "beginner", "intermediate math")
+- "practicalFocus": Specific subtopics/tools (e.g. "Tokio async, Axum", "No frontend")
 
-GUIDANCE:
-- If the raw goal statement is too vague or lacks sufficient signal (e.g., just "I want to learn Python"), set "needsMoreContext": true and provide a specific, helpful "clarifyingQuestion".
-- If the goal statement is specific enough, set "needsMoreContext": false and construct a sharp, goal-conditioned "specificObjective".
+SLOT CORRECTION RULES:
+- When extracting a proposed slot, set "isCorrection": true ONLY if the user's latest input explicitly corrects or changes a previously established slot. Otherwise set "isCorrection": false.
 
-Output must be JSON matching:
+FORCE PROCEED RULE:
+- Set "userRequestsProceed": true if the user explicitly asks to stop questions, proceed immediately, skip diagnosis, or build the tree now (e.g. "stop asking", "proceed", "build tree", "skip").
+
+BANNED BEHAVIOR:
+- Do not respond with encouragement ("Great goal!").
+- Do not make assumptions about unstated slots.
+- Do not re-attempt overwrites listed in PREVIOUSLY BLOCKED OVERWRITES unless user explicitly corrected them.
+
+Output MUST be valid JSON matching this schema:
 {
   "needsMoreContext": boolean,
-  "clarifyingQuestion": string (optional),
-  "currentGoal": {
-    "rawStatement": string,
-    "domain": string,
-    "specificObjective": string,
-    "contextArtifacts": string[]
+  "userRequestsProceed": boolean,
+  "clarifyingQuestion": string (optional or null),
+  "proposedSlots": {
+    "<slotKey>": {
+      "value": string,
+      "isCorrection": boolean,
+      "reasoning": string
+    }
   },
+  "unfilledSlotKeys": string[],
   "reasoning": string
 }`;
 
+  const blockedContext = slotState.blockedOverwrites.length > 0
+    ? `PREVIOUSLY BLOCKED OVERWRITES (Do NOT re-attempt unless user explicitly corrects):
+${slotState.blockedOverwrites.map((b) => `- Slot "${b.slotKey}": Attempted "${b.attemptedValue}" was REJECTED. Confirmed value: "${b.existingValue}".`).join('\n')}`
+    : 'None';
+
   const userPrompt = `Learner ID: ${input.learnerId}
-Raw Goal Statement: "${input.rawGoalStatement}"
+Latest User Input: "${input.rawGoalStatement}"
 Intent Classification: ${input.intentClassification}
-Context Artifacts Provided: ${input.contextArtifacts?.join(', ') || 'None'}`;
+Current Resolved Slots: ${JSON.stringify(slotState.slotsResolved)}
+Slots Still Needed: ${JSON.stringify(slotState.slotsStillNeeded)}
+Current Diagnosis Round: ${slotState.roundCount + 1} / 3
+Blocked Overwrites History: ${blockedContext}
+Context Artifacts: ${input.contextArtifacts?.join(', ') || 'None'}`;
 
   return await executeAgent<DiagnosisAgentInput, DiagnosisAgentOutput>({
     agentName: 'DiagnosisAgent',
@@ -62,14 +93,11 @@ Context Artifacts Provided: ${input.contextArtifacts?.join(', ') || 'None'}`;
     mockFn: mockOutput
       ? () => ({
           needsMoreContext: mockOutput.needsMoreContext ?? false,
+          userRequestsProceed: mockOutput.userRequestsProceed ?? false,
           clarifyingQuestion: mockOutput.clarifyingQuestion,
-          currentGoal: mockOutput.currentGoal || {
-            rawStatement: input.rawGoalStatement,
-            domain: "General Learning",
-            specificObjective: "Master core concepts in the target domain",
-            contextArtifacts: input.contextArtifacts || [],
-          },
-          reasoning: mockOutput.reasoning || "Mock diagnosis execution",
+          proposedSlots: mockOutput.proposedSlots || {},
+          unfilledSlotKeys: mockOutput.unfilledSlotKeys || [],
+          reasoning: mockOutput.reasoning || 'Mock diagnosis execution',
         })
       : undefined,
   });
@@ -104,8 +132,9 @@ export async function processDiagnosticTurn(
     summary: {
       userGoal: goal,
       intent: session?.intent || 'learning_goal',
-      extractedContext: result.output.currentGoal.specificObjective,
+      extractedContext: goal,
       calibration: { level: 'beginner', known_concepts: [], weak_points: [] },
     },
   };
 }
+

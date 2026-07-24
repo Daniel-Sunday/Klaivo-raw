@@ -8,12 +8,15 @@ export interface Calibration {
   weak_points: string[];
 }
 
+import { DiagnosisSlotState } from '../schemas';
+
 export interface Session {
   id: string;
   title: string;
   intent: string;
   status: 'diagnosing' | 'learning';
   calibration: Calibration;
+  slot_state?: DiagnosisSlotState;
   created_at?: string;
   updated_at?: string;
 }

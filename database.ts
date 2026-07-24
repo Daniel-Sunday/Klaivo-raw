@@ -43,10 +43,14 @@ export async function initDb(): Promise<void> {
       intent TEXT,
       status TEXT NOT NULL DEFAULT 'diagnosing',
       calibration TEXT NOT NULL,
+      slot_state TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  try {
+    sqliteDb.exec(`ALTER TABLE sessions ADD COLUMN slot_state TEXT`);
+  } catch (_) {}
   sqliteDb.exec(`
     CREATE TABLE IF NOT EXISTS nodes (
       id TEXT NOT NULL,
@@ -124,6 +128,7 @@ export async function createSession(
   }
 
   const calJson = JSON.stringify(sessionObj.calibration);
+  const slotJson = sessionObj.slot_state ? JSON.stringify(sessionObj.slot_state) : null;
   if (supabase) {
     try {
       await supabase.from('sessions').insert({
@@ -132,12 +137,13 @@ export async function createSession(
         intent: sessionObj.intent,
         status: sessionObj.status,
         calibration: calJson,
+        slot_state: slotJson,
       });
     } catch (_) {}
   }
   sqliteDb
-    .prepare('INSERT OR REPLACE INTO sessions (id, title, intent, status, calibration) VALUES (?, ?, ?, ?, ?)')
-    .run(sessionObj.id, sessionObj.title, sessionObj.intent, sessionObj.status, calJson);
+    .prepare('INSERT OR REPLACE INTO sessions (id, title, intent, status, calibration, slot_state) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(sessionObj.id, sessionObj.title, sessionObj.intent, sessionObj.status, calJson, slotJson);
 
   return getSession(sessionObj.id) as Promise<Session>;
 }
@@ -150,6 +156,7 @@ export async function getSession(id: string): Promise<Session | null> {
         return {
           ...data,
           calibration: typeof data.calibration === 'string' ? JSON.parse(data.calibration) : data.calibration,
+          slot_state: data.slot_state ? (typeof data.slot_state === 'string' ? JSON.parse(data.slot_state) : data.slot_state) : undefined,
         };
       }
     } catch (_) {}
@@ -159,6 +166,7 @@ export async function getSession(id: string): Promise<Session | null> {
   return {
     ...row,
     calibration: JSON.parse(row.calibration),
+    slot_state: row.slot_state ? JSON.parse(row.slot_state) : undefined,
   };
 }
 
@@ -166,6 +174,9 @@ export async function updateSession(id: string, updates: Partial<Omit<Session, '
   const dbUpdates: any = { ...updates, updated_at: new Date().toISOString() };
   if (updates.calibration) {
     dbUpdates.calibration = JSON.stringify(updates.calibration);
+  }
+  if (updates.slot_state) {
+    dbUpdates.slot_state = JSON.stringify(updates.slot_state);
   }
   if (supabase) {
     try {
@@ -185,6 +196,10 @@ export async function updateSessionStatus(id: string, status: 'diagnosing' | 'le
 
 export async function updateSessionCalibration(id: string, calibration: Calibration): Promise<void> {
   await updateSession(id, { calibration });
+}
+
+export async function updateSessionSlotState(id: string, slotState: any): Promise<void> {
+  await updateSession(id, { slot_state: slotState });
 }
 
 export async function getSessions(): Promise<Session[]> {

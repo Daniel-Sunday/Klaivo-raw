@@ -31,20 +31,18 @@ export async function runIntentAgent(
 ): Promise<AgentResult<IntentAgentOutput>> {
   const learnerId = input.learnerState?.learnerId || 'anonymous_learner';
 
-  const systemInstruction = `You are the Klaivo Intent Agent. Your single job is to classify the user's input request into exactly one of the following intent categories:
-- "quick_answer": Direct question seeking a immediate, concise factual response.
-- "learning_goal": Desire to master a subject, topic, or learn a new discipline over time.
-- "problem_solving": Debugging a specific error, resolving a stuck issue, or fixing broken code/math.
-- "project_building": Wanting to build, create, or architect a software app, system, or project.
-- "research": Deep exploration of academic papers, comparative literature, or complex analytical domains.
-- "exam_preparation": Studying specifically to pass an exam, test, or standard qualification.
+  const systemInstruction = `You are a classification system, not a conversational assistant.
+Classify the user's message into exactly one intent category. Do not explain your reasoning in the output. Do not add caveats, greetings, or filler. Output ONLY valid JSON matching this shape:
 
-Output MUST be a JSON object with:
-- "intent": one of the 6 intent keys listed above.
-- "confidence": number between 0.0 and 1.0 representing your certainty.
-- "reasoningForLog": brief one-sentence justification.
+{ "intent": "quick_answer" | "learning_goal" | "problem_solving" | "project_building" | "research" | "exam_preparation",
+  "confidence": <number 0-1>,
+  "reasoningForLog": "<one sentence, internal use only>" }
 
-Do NOT write prose outside JSON. Keep temperature low and classification deterministic.`;
+Rules:
+- "learning_goal" = the user wants to learn a subject/skill from some starting point toward some competence level.
+- "exam_preparation" = the user names a specific exam, test, or certification as the target.
+- "quick_answer" = a single factual question with no learning trajectory implied.
+- If genuinely ambiguous between two categories, pick the one that implies MORE structure needed, and lower confidence accordingly.`;
 
   const userPrompt = `User message: "${input.rawMessage}"
 Existing Learner Goal Context: ${input.learnerState?.currentGoal.specificObjective || 'None'}`;

@@ -8,6 +8,8 @@ import {
   RefinementDiff,
   SessionSummary,
   AgentLog,
+  DiagnosisSlotState,
+  processSlotUpdate,
   validateAssessmentResult,
 } from '../schemas';
 import { runIntentAgent, IntentAgentOutput } from '../agents/intentAgent';
@@ -22,10 +24,10 @@ import { runReflectionAgent } from '../agents/reflectionAgent';
 import { createStarterSkeleton, sanitizeRefinementDiff, sanitizeUserErrorMessage } from '../utils/errorHandling';
 
 export type IntakeWorkflowResult =
-  | { status: 'needs_clarification'; question: string; intentOutput: IntentAgentOutput }
-  | { status: 'light_response'; intent: string; response: string }
-  | { status: 'needs_more_context'; question: string; diagnosisOutput: DiagnosisAgentOutput }
-  | { status: 'tree_created'; tree: TreeSkeleton; learnerState: LearnerState; isFallback?: boolean };
+  | { status: 'needs_clarification'; question: string; intentOutput: IntentAgentOutput; slotState?: DiagnosisSlotState }
+  | { status: 'light_response'; intent: string; response: string; slotState?: DiagnosisSlotState }
+  | { status: 'needs_more_context'; question: string; diagnosisOutput: DiagnosisAgentOutput; slotState: DiagnosisSlotState }
+  | { status: 'tree_created'; tree: TreeSkeleton; learnerState: LearnerState; slotState: DiagnosisSlotState; isFallback?: boolean };
 
 export type AssessmentWorkflowResult =
   | { status: 'assessment_success'; assessmentResult: AssessmentResult; updatedState: LearnerState; tree: TreeSkeleton }
@@ -33,23 +35,47 @@ export type AssessmentWorkflowResult =
 
 export class KlaivoOrchestrator {
   /**
-   * 3.1 & 3.2 Primary Intake Workflow with Phase 4 Error Fallbacks
+   * 3.1 & 3.2 Primary Intake Workflow with Phase 4 Error Fallbacks & Explicit Slot-Filling
    * Enforces:
    * Guardrail 1: Intent Confidence Gate (<0.6 halt)
    * Guardrail 2: Short-circuit non-tree intents (quick_answer, problem_solving, research)
-   * Guardrail 3: Diagnosis Needs-More-Context Gate (halt before Drafter)
+   * Guardrail 3: Slot-filling validation, Overwrite Protection, and 3-Round Hard Cap
    * Fallback: Curriculum Drafter exhaustion -> Minimal starter skeleton (3-5 nodes)
    */
   public async handleIntakeWorkflow(
     userMessage: string,
     learnerState: LearnerState,
     contextArtifacts: string[] = [],
-    mockOverrides?: {
+    slotStateOrMock?: DiagnosisSlotState | {
+      intent?: Partial<IntentAgentOutput>;
+      diagnosis?: Partial<DiagnosisAgentOutput>;
+      skeleton?: Partial<TreeSkeleton>;
+    },
+    mockOverridesParam?: {
       intent?: Partial<IntentAgentOutput>;
       diagnosis?: Partial<DiagnosisAgentOutput>;
       skeleton?: Partial<TreeSkeleton>;
     }
   ): Promise<IntakeWorkflowResult> {
+    let slotState: DiagnosisSlotState | undefined = undefined;
+    let mockOverrides = mockOverridesParam;
+
+    if (slotStateOrMock) {
+      if ('slotsResolved' in slotStateOrMock || 'roundCount' in slotStateOrMock) {
+        slotState = slotStateOrMock as DiagnosisSlotState;
+      } else {
+        mockOverrides = slotStateOrMock as any;
+      }
+    }
+
+    const currentSlotState: DiagnosisSlotState = slotState || {
+      slotsResolved: {},
+      slotsStillNeeded: ['targetSubject', 'targetLevelOrOutcome', 'priorKnowledge'],
+      roundCount: 0,
+      forceProceedTriggered: false,
+      blockedOverwrites: [],
+    };
+
     // Step 1: Intent Agent
     const intentResult = await runIntentAgent(
       { rawMessage: userMessage, learnerState },
@@ -62,6 +88,7 @@ export class KlaivoOrchestrator {
         status: 'needs_clarification',
         question: sanitizeUserErrorMessage('IntentAgent', 'Low confidence'),
         intentOutput: intentResult.output,
+        slotState: currentSlotState,
       };
     }
 
@@ -73,31 +100,48 @@ export class KlaivoOrchestrator {
         status: 'light_response',
         intent,
         response: `Direct ${intent} response generated without tree drafting.`,
+        slotState: currentSlotState,
       };
     }
 
-    // Step 2: Diagnosis Agent
+    // Step 2: Diagnosis Agent with explicit Slot State Context
     const diagnosisResult = await runDiagnosisAgent(
       {
         learnerId: learnerState.learnerId,
         rawGoalStatement: userMessage,
+        currentSlotState,
         contextArtifacts,
         intentClassification: intent,
       },
       mockOverrides?.diagnosis
     );
 
-    // Guardrail 3: Diagnosis Needs-More-Context Gate
-    if (diagnosisResult.output.needsMoreContext) {
+    // Step 2b: Code-side Slot Filling Validation, Overwrite Protection, & Hard Cap
+    const slotUpdate = processSlotUpdate(
+      currentSlotState,
+      diagnosisResult.output.proposedSlots || {},
+      diagnosisResult.output.userRequestsProceed || false,
+      diagnosisResult.output.needsMoreContext ?? false,
+      diagnosisResult.output.clarifyingQuestion
+    );
+
+    // Guardrail 3: Diagnosis Needs-More-Context Gate (unless 3 rounds or force proceed met)
+    if (slotUpdate.finalNeedsMoreContext) {
       return {
         status: 'needs_more_context',
-        question: diagnosisResult.output.clarifyingQuestion || sanitizeUserErrorMessage('DiagnosisAgent', 'Vague goal'),
+        question: slotUpdate.finalClarifyingQuestion || sanitizeUserErrorMessage('DiagnosisAgent', 'Vague goal'),
         diagnosisOutput: diagnosisResult.output,
+        slotState: slotUpdate.updatedState,
       };
     }
 
-    // Update LearnerState currentGoal with validated objective
-    learnerState.currentGoal = diagnosisResult.output.currentGoal;
+    // Update LearnerState currentGoal with CODE-SYNTHESIZED objective from validated slots
+    learnerState.currentGoal = {
+      rawStatement: learnerState.currentGoal.rawStatement || userMessage,
+      domain: slotUpdate.updatedState.slotsResolved.targetSubject || 'General',
+      specificObjective: slotUpdate.synthesizedGoal,
+      contextArtifacts,
+    };
 
     // Step 3: Curriculum Drafter with Phase 4 Fallback
     const treeId = `tree_${Date.now()}`;
@@ -134,9 +178,11 @@ export class KlaivoOrchestrator {
       status: 'tree_created',
       tree: skeleton,
       learnerState,
+      slotState: slotUpdate.updatedState,
       isFallback,
     };
   }
+
 
   /**
    * 3.4 Lazy Loading Node Content Workflow

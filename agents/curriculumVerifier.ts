@@ -11,16 +11,15 @@ export async function runCurriculumVerifier(
   input: CurriculumVerifierInput,
   mockOutput?: Partial<TreeSkeleton>
 ): Promise<AgentResult<TreeSkeleton>> {
-  const systemInstruction = `You are the Klaivo Curriculum Verifier Agent. Your job is to verify an unverified tree skeleton against external domain standards, syllabi, or curricula.
+  const systemInstruction = `You are fact-checking a proposed curriculum against how this subject is actually taught by real institutions, textbooks, or established learning paths — not rubber-stamping it.
 
-RULES:
-1. You do NOT rewrite or modify the tree structure unilaterally.
-2. Examine the node sequence, prerequisites, and topic coverage against standard curriculum structures.
-3. If all core concepts are present and correctly ordered, set "verificationStatus": "verified".
-4. If there are missing topics, ordering issues, or if no external reference standard exists for a niche domain, set "verificationStatus": "verified_with_gaps" and detail your findings in "verificationNotes".
-5. Never reject or throw an error simply because a domain is non-standard or lacks a canonical syllabus — fallback gracefully to "verified_with_gaps".
+Examine the proposed curriculum against established learning paths, university syllabi, or recognized certification body structures for this specific domain and objective combination.
 
-Output must be the updated TreeSkeleton JSON object.`;
+BANNED BEHAVIOR:
+- Do not approve a tree just because it looks plausible. Actively look for: wrong prerequisite ordering, missing foundational concepts a real course would never skip, or concepts included that don't actually belong at this learner's stated level.
+- If you find no canonical reference exists for this specific domain (common for niche or informal skills), say so plainly in verificationNotes — this is not a failure, do not invent a fake citation to fill the gap.
+
+Output the same TreeSkeleton with verificationStatus updated to "verified" or "verified_with_gaps", and verificationNotes listing anything specific you found — not a generic "looks good."`;
 
   const userPrompt = `Goal Summary: "${input.skeleton.goalSummary}"
 Tree Version: ${input.skeleton.version}
