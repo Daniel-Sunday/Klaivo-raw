@@ -1,4 +1,5 @@
 import { ConceptCanvas } from './canvas';
+import { TaskSandbox } from './sandbox';
 import { CurriculumNode, Message } from '../../types';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -49,10 +50,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const onboardingFileInput = document.getElementById('onboarding-file-input') as HTMLInputElement;
   const onboardingFilesList = document.getElementById('onboarding-files-list') as HTMLElement;
 
-  // Canvas
+  // Canvas & Sandbox
   const canvasSessionTitle = document.getElementById('canvas-session-title') as HTMLElement;
   const canvasSessionStats = document.getElementById('canvas-session-stats') as HTMLElement;
   const canvas = new ConceptCanvas('concept-svg');
+  const taskSandbox = new TaskSandbox('task-sandbox-container');
 
   // ══════════════════════════════════════════════════
   // Auto-resizing multiline composer helper
@@ -244,7 +246,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch('/api/sessions');
       if (!res.ok) return;
       const data = await res.json();
-      const sessions = data.sessions || [];
+      const rawSessions = data.sessions || [];
+      const sessions = rawSessions.map((s: any) => (s.session ? { ...s.session, nodes: s.nodes } : s));
 
       // Helper to build a session nav item with 3-dot options
       const buildSessionNavItem = (sess: any): HTMLElement => {
@@ -834,11 +837,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
   // ══════════════════════════════════════════════════
-  // Node canvas click → open teaching thread
+  // Node canvas click → open teaching thread & task challenges
   // ══════════════════════════════════════════════════
   canvas.onNodeClick(async (node) => {
-    if (node.status === 'locked') return;
-
     document.querySelectorAll('.svg-node-group').forEach(el => el.classList.remove('active'));
     document.getElementById(`node-group-${node.id}`)?.classList.add('active');
 
@@ -884,12 +885,72 @@ document.addEventListener('DOMContentLoaded', () => {
         chatHistory.scrollTop = chatHistory.scrollHeight;
       }
 
+      // Append interactive Task Challenge launcher card
+      appendTaskLauncherCard(node);
+
     } catch (err) {
       console.error(err);
       thinkingWrapper.remove();
       appendMessage('assistant', 'Failed to load learning content. Please try clicking the node again.');
     }
   });
+
+  function appendTaskLauncherCard(node: CurriculumNode): void {
+    const launcherWrapper = document.createElement('div');
+    launcherWrapper.className = 'message-wrapper assistant';
+    launcherWrapper.dataset.nodeId = node.id;
+    launcherWrapper.innerHTML = `
+      <div class="message-bubble">
+        <div class="task-launcher-card" style="padding: 12px; background: rgba(37, 99, 235, 0.12); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 12px; margin-top: 8px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <div>
+              <strong style="font-size: 13px; color: #60a5fa;">🎯 Practical Task Challenge</strong>
+              <div style="font-size: 12px; color: rgba(255,255,255,0.7); margin-top: 2px;">Test your understanding on "${node.title}" with runtime evaluation.</div>
+            </div>
+            <button id="launch-task-btn-${node.id}" style="padding: 6px 12px; background: #2563eb; color: #fff; border: none; border-radius: 8px; font-weight: 600; font-size: 12px; cursor: pointer;">
+              Launch Challenge
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    chatHistory.appendChild(launcherWrapper);
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+
+    document.getElementById(`launch-task-btn-${node.id}`)?.addEventListener('click', async () => {
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/task-simulation`, { method: 'POST' });
+        if (!res.ok) return;
+        const { task } = await res.json();
+
+        taskSandbox.render(task, async (submission: string) => {
+          const evalRes = await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/evaluate-task`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ submission, taskSpec: task }),
+          });
+
+          if (evalRes.ok) {
+            const data = await evalRes.json();
+            taskSandbox.showFeedback(
+              data.evaluation.score,
+              data.evaluation.passed,
+              data.evaluation.feedback,
+              data.evaluation.detectedMisconceptions
+            );
+
+            if (data.nodes) {
+              nodes = data.nodes;
+              canvas.render(nodes);
+              updateStats();
+            }
+          }
+        });
+      } catch (err) {
+        console.error('Error launching task simulation:', err);
+      }
+    });
+  }
 
   exitNodeBtn.addEventListener('click', () => {
     activeNodeId = null;
@@ -991,6 +1052,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = await response.json();
         thinkingWrapper.remove();
         appendMessage('assistant', data.response);
+
+        if (data.title) {
+          if (canvasSessionTitle) canvasSessionTitle.textContent = data.title;
+          loadNavigationHistory();
+        }
 
         if (data.status === 'learning' || (data.nodes && data.nodes.length > 0)) {
           nodes = data.nodes;

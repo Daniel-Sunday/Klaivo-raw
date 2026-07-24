@@ -337,9 +337,8 @@ export class ConceptCanvas {
     descText.textContent = desc;
     group.appendChild(descText);
 
-    // Event listener
+    // Event listener — Learner Autonomy: Allow clicking any node for exploration or challenge
     group.addEventListener('click', () => {
-      if (node.status === 'locked') return;
       if (this.onNodeClickCallback) {
         this.onNodeClickCallback(node);
       }

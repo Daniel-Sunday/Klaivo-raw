@@ -264,7 +264,6 @@
       descText.textContent = desc;
       group.appendChild(descText);
       group.addEventListener("click", () => {
-        if (node.status === "locked") return;
         if (this.onNodeClickCallback) {
           this.onNodeClickCallback(node);
         }
@@ -297,6 +296,130 @@
       <path d="M 6 8 V 5 A 4 4 0 0 1 14 5 V 8" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round"/>
     `;
       return g;
+    }
+  };
+
+  // public/js/sandbox.ts
+  var TaskSandbox = class {
+    container;
+    currentTask = null;
+    onSubmitCallback = null;
+    constructor(containerId) {
+      let el = document.getElementById(containerId);
+      if (!el) {
+        el = document.createElement("div");
+        el.id = containerId;
+        el.className = "task-sandbox-container hidden";
+        const canvasPanel = document.getElementById("canvas-panel");
+        if (canvasPanel) {
+          canvasPanel.appendChild(el);
+        }
+      }
+      this.container = el;
+    }
+    getModalityMeta(modality) {
+      switch (modality) {
+        case "code_challenge":
+          return { badge: "\u{1F4BB} Code Simulation", label: "Solution Code" };
+        case "exam_rubric_challenge":
+          return { badge: "\u{1F4DD} Exam Rubric Challenge", label: "Written Response" };
+        case "scenario_simulation":
+          return { badge: "\u{1F4BC} Strategic Case Scenario", label: "Scenario Analysis & Decision" };
+        case "creative_synthesis_challenge":
+          return { badge: "\u{1F3A8} Creative & Structural Synthesis", label: "Synthesis Response" };
+        case "dialogue_simulation":
+          return { badge: "\u{1F4AC} Interactive Dialogue Simulation", label: "Dialogue / Translation" };
+        case "math_proof_challenge":
+          return { badge: "\u{1F4D0} Quantitative Proof Challenge", label: "Step-by-Step Proof" };
+        default:
+          return { badge: "\u{1F3AF} Domain Task Challenge", label: "Task Response" };
+      }
+    }
+    render(task, onSubmit) {
+      this.currentTask = task;
+      this.onSubmitCallback = onSubmit;
+      const meta = this.getModalityMeta(task.taskType);
+      this.container.classList.remove("hidden");
+      this.container.innerHTML = `
+      <div class="sandbox-header">
+        <div class="sandbox-title-group">
+          <span class="sandbox-badge">${meta.badge}${task.domainCategory ? ` \xB7 ${task.domainCategory}` : ""}</span>
+          <h4 class="sandbox-title">${task.title}</h4>
+        </div>
+        <button class="sandbox-close-btn" id="sandbox-close-btn" title="Close Task Sandbox">\xD7</button>
+      </div>
+
+      <div class="sandbox-body">
+        <div class="sandbox-instructions">
+          <h5>Challenge Instructions</h5>
+          <p>${task.instructions}</p>
+          ${task.solutionRubric ? `<div class="sandbox-rubric"><strong>Evaluation Criteria:</strong> ${task.solutionRubric}</div>` : ""}
+        </div>
+
+        <div class="sandbox-editor-wrapper">
+          <div class="sandbox-editor-header">
+            <span>${meta.label}</span>
+          </div>
+          <textarea id="sandbox-editor-input" class="sandbox-editor-textarea" placeholder="Write your response here...">${task.starterTemplate || ""}</textarea>
+        </div>
+
+        <div class="sandbox-actions">
+          <button id="sandbox-submit-btn" class="sandbox-submit-btn">Submit Solution for Evaluation</button>
+        </div>
+
+        <div id="sandbox-feedback-area" class="sandbox-feedback-area hidden"></div>
+      </div>
+    `;
+      document.getElementById("sandbox-close-btn")?.addEventListener("click", () => {
+        this.hide();
+      });
+      document.getElementById("sandbox-submit-btn")?.addEventListener("click", async () => {
+        const inputEl = document.getElementById("sandbox-editor-input");
+        const feedbackEl = document.getElementById("sandbox-feedback-area");
+        const submitBtn = document.getElementById("sandbox-submit-btn");
+        if (!inputEl || !inputEl.value.trim()) return;
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.innerText = "Evaluating Solution...";
+        }
+        if (feedbackEl) {
+          feedbackEl.classList.remove("hidden");
+          feedbackEl.innerHTML = `<div class="sandbox-eval-spinner">Running domain evaluation & rubric analysis...</div>`;
+        }
+        if (this.onSubmitCallback) {
+          await this.onSubmitCallback(inputEl.value);
+        }
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerText = "Submit Solution for Evaluation";
+        }
+      });
+    }
+    showFeedback(score, passed, feedback, misconceptions = [], strengths = []) {
+      const feedbackEl = document.getElementById("sandbox-feedback-area");
+      if (!feedbackEl) return;
+      feedbackEl.classList.remove("hidden");
+      const badgeClass = passed ? "feedback-pass" : "feedback-refine";
+      const badgeText = passed ? "\u2705 PASSED (Score: " + Math.round(score * 100) + "%)" : "\u26A0\uFE0F REFINEMENT NEEDED (Score: " + Math.round(score * 100) + "%)";
+      feedbackEl.innerHTML = `
+      <div class="sandbox-result-badge ${badgeClass}">${badgeText}</div>
+      <div class="sandbox-result-text">${feedback}</div>
+      ${strengths.length > 0 ? `
+        <div class="sandbox-strengths" style="margin-top: 10px; font-size: 12px; color: #34d399;">
+          <strong>Demonstrated Strengths:</strong>
+          <ul>${strengths.map((s) => `<li>${s}</li>`).join("")}</ul>
+        </div>
+      ` : ""}
+      ${misconceptions.length > 0 ? `
+        <div class="sandbox-misconceptions" style="margin-top: 10px; font-size: 12px; color: #fb7185;">
+          <strong>Key Focus Areas:</strong>
+          <ul>${misconceptions.map((m) => `<li>${m}</li>`).join("")}</ul>
+        </div>
+      ` : ""}
+    `;
+    }
+    hide() {
+      this.container.classList.add("hidden");
     }
   };
 
@@ -333,6 +456,7 @@
     const canvasSessionTitle = document.getElementById("canvas-session-title");
     const canvasSessionStats = document.getElementById("canvas-session-stats");
     const canvas = new ConceptCanvas("concept-svg");
+    const taskSandbox = new TaskSandbox("task-sandbox-container");
     function setupAutoResizeTextarea(textarea) {
       if (!textarea) return;
       const adjustHeight = () => {
@@ -476,7 +600,8 @@
         const res = await fetch("/api/sessions");
         if (!res.ok) return;
         const data = await res.json();
-        const sessions = data.sessions || [];
+        const rawSessions = data.sessions || [];
+        const sessions = rawSessions.map((s) => s.session ? { ...s.session, nodes: s.nodes } : s);
         const buildSessionNavItem = (sess) => {
           const item = document.createElement("div");
           item.className = `nav-item ${sess.id === sessionId && !activeNodeId ? "active" : ""}`;
@@ -945,7 +1070,6 @@ This will clear chat history for this concept node so you can re-learn it from s
       }
     });
     canvas.onNodeClick(async (node) => {
-      if (node.status === "locked") return;
       document.querySelectorAll(".svg-node-group").forEach((el) => el.classList.remove("active"));
       document.getElementById(`node-group-${node.id}`)?.classList.add("active");
       activeNodeId = node.id;
@@ -983,12 +1107,65 @@ This will clear chat history for this concept node so you can re-learn it from s
           renderMessageBubble(currentMsgWrapper.querySelector(".message-bubble"), streamedContent);
           chatHistory.scrollTop = chatHistory.scrollHeight;
         }
+        appendTaskLauncherCard(node);
       } catch (err) {
         console.error(err);
         thinkingWrapper.remove();
         appendMessage("assistant", "Failed to load learning content. Please try clicking the node again.");
       }
     });
+    function appendTaskLauncherCard(node) {
+      const launcherWrapper = document.createElement("div");
+      launcherWrapper.className = "message-wrapper assistant";
+      launcherWrapper.dataset.nodeId = node.id;
+      launcherWrapper.innerHTML = `
+      <div class="message-bubble">
+        <div class="task-launcher-card" style="padding: 12px; background: rgba(37, 99, 235, 0.12); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 12px; margin-top: 8px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <div>
+              <strong style="font-size: 13px; color: #60a5fa;">\u{1F3AF} Practical Task Challenge</strong>
+              <div style="font-size: 12px; color: rgba(255,255,255,0.7); margin-top: 2px;">Test your understanding on "${node.title}" with runtime evaluation.</div>
+            </div>
+            <button id="launch-task-btn-${node.id}" style="padding: 6px 12px; background: #2563eb; color: #fff; border: none; border-radius: 8px; font-weight: 600; font-size: 12px; cursor: pointer;">
+              Launch Challenge
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+      chatHistory.appendChild(launcherWrapper);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+      document.getElementById(`launch-task-btn-${node.id}`)?.addEventListener("click", async () => {
+        try {
+          const res = await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/task-simulation`, { method: "POST" });
+          if (!res.ok) return;
+          const { task } = await res.json();
+          taskSandbox.render(task, async (submission) => {
+            const evalRes = await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/evaluate-task`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ submission, taskSpec: task })
+            });
+            if (evalRes.ok) {
+              const data = await evalRes.json();
+              taskSandbox.showFeedback(
+                data.evaluation.score,
+                data.evaluation.passed,
+                data.evaluation.feedback,
+                data.evaluation.detectedMisconceptions
+              );
+              if (data.nodes) {
+                nodes = data.nodes;
+                canvas.render(nodes);
+                updateStats();
+              }
+            }
+          });
+        } catch (err) {
+          console.error("Error launching task simulation:", err);
+        }
+      });
+    }
     exitNodeBtn.addEventListener("click", () => {
       activeNodeId = null;
       sidebarNodeTitle.textContent = "Learning Session";
@@ -1073,6 +1250,10 @@ This will clear chat history for this concept node so you can re-learn it from s
           const data = await response.json();
           thinkingWrapper.remove();
           appendMessage("assistant", data.response);
+          if (data.title) {
+            if (canvasSessionTitle) canvasSessionTitle.textContent = data.title;
+            loadNavigationHistory();
+          }
           if (data.status === "learning" || data.nodes && data.nodes.length > 0) {
             nodes = data.nodes;
             canvas.render(nodes);

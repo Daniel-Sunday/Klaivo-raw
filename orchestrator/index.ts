@@ -104,11 +104,16 @@ export class KlaivoOrchestrator {
       };
     }
 
-    // Step 2: Diagnosis Agent with explicit Slot State Context
+    const conversationHistory = learnerState.chatHistory && learnerState.chatHistory.length > 0
+      ? learnerState.chatHistory.map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+      : [userMessage];
+
+    // Step 2: Diagnosis Agent with explicit Slot State Context & Full Conversation Memory
     const diagnosisResult = await runDiagnosisAgent(
       {
         learnerId: learnerState.learnerId,
         rawGoalStatement: userMessage,
+        conversationHistory,
         currentSlotState,
         contextArtifacts,
         intentClassification: intent,

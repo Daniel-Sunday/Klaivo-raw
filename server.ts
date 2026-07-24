@@ -12,6 +12,10 @@ import { extractTextFromPdf } from './utils/pdfReader';
 import { KlaivoOrchestrator } from './orchestrator';
 import { LearnerState, TreeSkeleton, TreeNode } from './schemas';
 import { Calibration, CurriculumNode } from './types';
+import { processUploadedArtifact } from './utils/ragIngestion';
+import { generateTaskSimulation, evaluateTaskSubmission } from './agents/taskSimulationAgent';
+import { addEvidenceSignal, computeAdvisoryNodeBadges } from './utils/evidenceEngine';
+import { generateSessionTitle } from './utils/sessionTitler';
 
 const projectRoot = fs.existsSync(path.join(__dirname, 'public'))
   ? __dirname
@@ -108,13 +112,20 @@ export function mapTreeSkeletonToCurriculumNodes(sessionId: string, skeleton: Tr
 }
 
 // Helper to construct LearnerState from Session
-function buildLearnerState(sessionId: string, session: any): LearnerState {
+async function buildLearnerState(sessionId: string, session: any): Promise<LearnerState> {
   let cal: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
   if (session?.calibration) {
     try {
       cal = typeof session.calibration === 'string' ? JSON.parse(session.calibration) : session.calibration;
     } catch (_) {}
   }
+
+  const messages = await db.getMessages(sessionId);
+  const chatHistory = (messages || []).map((m: any) => ({
+    role: m.sender === 'user' ? ('user' as const) : ('assistant' as const),
+    content: m.content,
+  }));
+
   return {
     learnerId: sessionId,
     currentGoal: {
@@ -126,6 +137,7 @@ function buildLearnerState(sessionId: string, session: any): LearnerState {
     vocabularyLevel: cal.level === 'beginner' ? 'beginner' : cal.level === 'advanced' ? 'advanced' : 'intermediate',
     masteryMap: {},
     sessionHistory: [],
+    chatHistory,
   };
 }
 
@@ -136,7 +148,11 @@ function buildLearnerState(sessionId: string, session: any): LearnerState {
  */
 app.get('/api/sessions', async (req: Request, res: Response): Promise<any> => {
   try {
-    const sessions = await db.getAllSessionsWithNodes();
+    const rawSessions = await db.getAllSessionsWithNodes();
+    const sessions = rawSessions.map((item) => ({
+      ...item.session,
+      nodes: item.nodes,
+    }));
     return res.json({ sessions });
   } catch (err: any) {
     console.error('Error fetching sessions list:', err);
@@ -200,6 +216,7 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
       vocabularyLevel: 'intermediate',
       masteryMap: {},
       sessionHistory: [],
+      chatHistory: [],
     };
 
     // ─── PIPELINE START ──────────────────────────────────────────
@@ -220,15 +237,20 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
     console.log(`✅ PIPELINE COMPLETE — status: ${intakeResult.status}`);
     console.log(`${'═'.repeat(60)}\n`);
 
+    const targetSubj = intakeResult.slotState?.slotsResolved?.targetSubject;
+    const goalSum = intakeResult.status === 'tree_created' ? intakeResult.tree.goalSummary : undefined;
+    const sessionTitle = generateSessionTitle(initial_prompt, targetSubj, goalSum);
+
     if (intakeResult.status === 'needs_clarification') {
       const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
-      await db.createSession(sessionId, initial_prompt, 'learning', 'diagnosing', calibration);
+      await db.createSession(sessionId, sessionTitle, 'learning', 'diagnosing', calibration);
       if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
       await db.createMessage(sessionId, null, 'user', initial_prompt);
       await db.createMessage(sessionId, null, 'assistant', intakeResult.question);
 
       return res.json({
         sessionId,
+        title: sessionTitle,
         intent: 'learning',
         calibration,
         diagnosticQuestion: intakeResult.question,
@@ -238,13 +260,14 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
 
     if (intakeResult.status === 'needs_more_context') {
       const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
-      await db.createSession(sessionId, initial_prompt, 'learning', 'diagnosing', calibration);
+      await db.createSession(sessionId, sessionTitle, 'learning', 'diagnosing', calibration);
       if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
       await db.createMessage(sessionId, null, 'user', initial_prompt);
       await db.createMessage(sessionId, null, 'assistant', intakeResult.question);
 
       return res.json({
         sessionId,
+        title: sessionTitle,
         intent: 'learning',
         calibration,
         diagnosticQuestion: intakeResult.question,
@@ -254,13 +277,14 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
 
     if (intakeResult.status === 'light_response') {
       const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
-      await db.createSession(sessionId, initial_prompt, intakeResult.intent, 'learning', calibration);
+      await db.createSession(sessionId, sessionTitle, intakeResult.intent, 'learning', calibration);
       if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
       await db.createMessage(sessionId, null, 'user', initial_prompt);
       await db.createMessage(sessionId, null, 'assistant', intakeResult.response);
 
       return res.json({
         sessionId,
+        title: sessionTitle,
         intent: intakeResult.intent,
         calibration,
         response: intakeResult.response,
@@ -273,7 +297,7 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
     const formattedNodes = mapTreeSkeletonToCurriculumNodes(sessionId, skeleton);
 
     const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
-    await db.createSession(sessionId, initial_prompt, skeleton.goalSummary, 'learning', calibration);
+    await db.createSession(sessionId, sessionTitle, skeleton.goalSummary, 'learning', calibration);
     if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
     await db.saveNodes(sessionId, formattedNodes);
     await db.createMessage(sessionId, null, 'user', initial_prompt);
@@ -283,6 +307,7 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
 
     return res.json({
       sessionId,
+      title: sessionTitle,
       intent: skeleton.goalSummary,
       calibration,
       diagnosticQuestion: introMsg,
@@ -309,13 +334,18 @@ app.post('/api/sessions/:id/diagnose', async (req: Request, res: Response): Prom
     }
 
     await db.createMessage(sessionId, null, 'user', text);
-    const learnerState = buildLearnerState(sessionId, session);
+    const learnerState = await buildLearnerState(sessionId, session);
 
     const intakeResult = await orchestrator.handleIntakeWorkflow(text, learnerState, [], session.slot_state);
 
     if (intakeResult.slotState) {
       await db.updateSessionSlotState(sessionId, intakeResult.slotState);
     }
+
+    const diagSubj = intakeResult.slotState?.slotsResolved?.targetSubject;
+    const diagGoal = intakeResult.status === 'tree_created' ? intakeResult.tree.goalSummary : undefined;
+    const updatedTitle = generateSessionTitle(session.title || text, diagSubj, diagGoal);
+    await db.updateSessionTitle(sessionId, updatedTitle);
 
     if (intakeResult.status === 'tree_created') {
       const formattedNodes = mapTreeSkeletonToCurriculumNodes(sessionId, intakeResult.tree);
@@ -327,6 +357,7 @@ app.post('/api/sessions/:id/diagnose', async (req: Request, res: Response): Prom
 
       return res.json({
         status: 'learning',
+        title: updatedTitle,
         response: finalMsg,
         nodes: formattedNodes,
       });
@@ -335,6 +366,7 @@ app.post('/api/sessions/:id/diagnose', async (req: Request, res: Response): Prom
       await db.createMessage(sessionId, null, 'assistant', q);
       return res.json({
         status: 'diagnosing',
+        title: updatedTitle,
         response: q,
       });
     }
@@ -465,7 +497,7 @@ app.get('/api/sessions/:id/nodes/:nodeId/teach', async (req: Request, res: Respo
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Transfer-Encoding', 'chunked');
 
-    const learnerState = buildLearnerState(id, session);
+    const learnerState = await buildLearnerState(id, session);
     const mockTree: TreeSkeleton = {
       treeId: `tree_${id}`,
       learnerId: id,
@@ -523,7 +555,7 @@ app.post('/api/sessions/:id/nodes/:nodeId/message', async (req: Request, res: Re
 
     await db.createMessage(id, nodeId, 'user', answer);
 
-    const learnerState = buildLearnerState(id, session);
+    const learnerState = await buildLearnerState(id, session);
     const mockTree: TreeSkeleton = {
       treeId: `tree_${id}`,
       learnerId: id,
@@ -600,6 +632,102 @@ app.post('/api/sessions/:id/nodes/:nodeId/message', async (req: Request, res: Re
     }
   } catch (error: any) {
     console.error('[server] Error processing node message:', error);
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
+  }
+});
+
+/**
+ * POST /api/sessions/:id/nodes/:nodeId/task-simulation: Generate / fetch interactive task simulation
+ */
+app.post('/api/sessions/:id/nodes/:nodeId/task-simulation', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+    const nodeId = req.params.nodeId as string;
+
+    const existing = await db.getTaskSimulation(id, nodeId);
+    if (existing) {
+      return res.json({ task: existing.prompt_spec });
+    }
+
+    const session = await db.getSession(id);
+    const dbNodes = await db.getNodes(id);
+    const targetNode = dbNodes.find((n) => n.id === nodeId);
+
+    if (!session || !targetNode) {
+      return res.status(404).json({ error: 'Session or Node not found' });
+    }
+
+    const mockTreeNode: TreeNode = {
+      id: targetNode.id,
+      title: targetNode.title,
+      oneLineSummary: targetNode.description || '',
+      goalRelevance: targetNode.description || '',
+      prerequisiteIds: targetNode.dependencies || [],
+      status: 'available',
+      content: null,
+      masteryScore: 0.0,
+      depth: 0,
+    };
+
+    const taskSpec = await generateTaskSimulation({
+      sessionId: id,
+      node: mockTreeNode,
+      goalSummary: session.title,
+      vocabularyLevel: 'intermediate',
+    });
+
+    await db.saveTaskSimulation(
+      taskSpec.id,
+      id,
+      nodeId,
+      taskSpec.taskType,
+      taskSpec,
+      taskSpec.starterTemplate,
+      taskSpec.solutionRubric
+    );
+
+    return res.json({ task: taskSpec });
+  } catch (error: any) {
+    console.error('[server] Error generating task simulation:', error);
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
+  }
+});
+
+/**
+ * POST /api/sessions/:id/nodes/:nodeId/evaluate-task: Evaluate task submission & update evidence score
+ */
+app.post('/api/sessions/:id/nodes/:nodeId/evaluate-task', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+    const nodeId = req.params.nodeId as string;
+    const { submission, taskSpec } = req.body;
+
+    if (!submission || !taskSpec) {
+      return res.status(400).json({ error: 'Submission and taskSpec are required' });
+    }
+
+    const evalResult = await evaluateTaskSubmission(taskSpec, submission, id);
+
+    // Record multi-signal evidence score
+    const evidenceSummary = await addEvidenceSignal(id, nodeId, {
+      type: 'task_simulation',
+      score: evalResult.score,
+      timestamp: new Date().toISOString(),
+    });
+
+    if (evalResult.passed) {
+      await db.updateNodeStatus(id, nodeId, 'completed');
+    }
+
+    const updatedNodes = await db.getNodes(id);
+
+    return res.json({
+      evaluation: evalResult,
+      evidenceSummary,
+      nodes: updatedNodes,
+    });
+  } catch (error: any) {
+    console.error('[server] Error evaluating task submission:', error);
     return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });

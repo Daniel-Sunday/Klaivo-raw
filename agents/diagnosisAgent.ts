@@ -15,6 +15,7 @@ export { DiagnosisAgentOutputSchema, DiagnosisAgentOutput };
 export interface DiagnosisAgentInput {
   learnerId: string;
   rawGoalStatement: string;
+  conversationHistory?: string[];
   currentSlotState?: DiagnosisSlotState;
   contextArtifacts?: string[];
   intentClassification: string;
@@ -26,31 +27,28 @@ export async function runDiagnosisAgent(
 ): Promise<AgentResult<DiagnosisAgentOutput>> {
   const slotState = input.currentSlotState || {
     slotsResolved: {},
-    slotsStillNeeded: ['targetSubject', 'targetLevelOrOutcome', 'priorKnowledge'],
+    slotsStillNeeded: ['targetSubject', 'targetLevelOrOutcome'],
     roundCount: 0,
     forceProceedTriggered: false,
     blockedOverwrites: [],
   };
 
-  const systemInstruction = `You are a rigorous academic advisor, not a customer support agent.
-Your job is to analyze the user's input and extract structured intake slots for designing their learning curriculum.
+  const systemInstruction = `You are Klaivo's Instant Academic Advisor & Intake Agent.
+Your primary job is to extract structured intake slots and IMMEDIATELY enable curriculum tree creation.
+
+INSTANT TREE GENERATION POLICY:
+- If "targetSubject" is present or identifiable in the user's input or conversation history (e.g. "WAEC Chemistry", "Build an LLM from scratch", "Python", "Rust"), set "needsMoreContext": false IMMEDIATELY!
+- Do NOT ask optional questions about prior knowledge, time availability, or learning style if "targetSubject" is known. Generate the curriculum map right away!
+- Set "needsMoreContext": true ONLY if the user's goal statement is completely empty or ambiguous (e.g., "help me learn something").
 
 SLOT KEYS TO EXTRACT:
-- "targetSubject": The topic/domain (e.g. "Rust Backend Engineering", "Linear Algebra", "AWS Architect")
-- "targetLevelOrOutcome": Target proficiency/objective (e.g. "production microservices", "pass exam X")
-- "priorKnowledge": Baseline background (e.g. "3 years C++", "beginner", "intermediate math")
-- "practicalFocus": Specific subtopics/tools (e.g. "Tokio async, Axum", "No frontend")
-
-SLOT CORRECTION RULES:
-- When extracting a proposed slot, set "isCorrection": true ONLY if the user's latest input explicitly corrects or changes a previously established slot. Otherwise set "isCorrection": false.
+- "targetSubject": The topic/domain (e.g. "Rust Backend Engineering", "Linear Algebra", "AWS Architect", "LLM from scratch", "WAEC Chemistry")
+- "targetLevelOrOutcome": Target proficiency/objective (e.g. "production microservices", "pass exam", "build working prototype")
+- "priorKnowledge": Baseline background (optional fallback)
+- "practicalFocus": Specific subtopics/tools (optional fallback)
 
 FORCE PROCEED RULE:
-- Set "userRequestsProceed": true if the user explicitly asks to stop questions, proceed immediately, skip diagnosis, or build the tree now (e.g. "stop asking", "proceed", "build tree", "skip").
-
-BANNED BEHAVIOR:
-- Do not respond with encouragement ("Great goal!").
-- Do not make assumptions about unstated slots.
-- Do not re-attempt overwrites listed in PREVIOUSLY BLOCKED OVERWRITES unless user explicitly corrected them.
+- Set "userRequestsProceed": true if the user asks to stop questions, proceed immediately, skip diagnosis, or build the tree now (e.g. "stop asking", "proceed", "build tree", "skip").
 
 Output MUST be valid JSON matching this schema:
 {
@@ -73,12 +71,16 @@ Output MUST be valid JSON matching this schema:
 ${slotState.blockedOverwrites.map((b) => `- Slot "${b.slotKey}": Attempted "${b.attemptedValue}" was REJECTED. Confirmed value: "${b.existingValue}".`).join('\n')}`
     : 'None';
 
+  const historyContext = input.conversationHistory && input.conversationHistory.length > 0
+    ? `FULL SESSION CONVERSATION HISTORY:\n${input.conversationHistory.map((m, idx) => `Turn ${idx + 1}: ${m}`).join('\n')}`
+    : 'Turn 1 (Initial prompt)';
+
   const userPrompt = `Learner ID: ${input.learnerId}
 Latest User Input: "${input.rawGoalStatement}"
+${historyContext}
 Intent Classification: ${input.intentClassification}
 Current Resolved Slots: ${JSON.stringify(slotState.slotsResolved)}
-Slots Still Needed: ${JSON.stringify(slotState.slotsStillNeeded)}
-Current Diagnosis Round: ${slotState.roundCount + 1} / 3
+Current Diagnosis Round: ${slotState.roundCount + 1} / 1
 Blocked Overwrites History: ${blockedContext}
 Context Artifacts: ${input.contextArtifacts?.join(', ') || 'None'}`;
 

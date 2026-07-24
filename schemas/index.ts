@@ -38,12 +38,19 @@ export const SessionSummarySchema = z.object({
 });
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
+export const ChatMessageEntrySchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string(),
+});
+export type ChatMessageEntry = z.infer<typeof ChatMessageEntrySchema>;
+
 export const LearnerStateSchema = z.object({
   learnerId: z.string().min(1, "learnerId required"),
   currentGoal: LearnerGoalSchema,
   vocabularyLevel: VocabularyLevelSchema,
   masteryMap: z.record(z.string(), MasteryMapEntrySchema),
   sessionHistory: z.array(SessionSummarySchema).default([]),
+  chatHistory: z.array(ChatMessageEntrySchema).optional(),
 });
 export type LearnerState = z.infer<typeof LearnerStateSchema>;
 
@@ -286,16 +293,16 @@ export function processSlotUpdate(
     }
   }
 
-  const allRequiredKeys = ['targetSubject', 'targetLevelOrOutcome', 'priorKnowledge'];
-  const remainingNeeded = allRequiredKeys.filter((k) => !updatedSlotsResolved[k]);
+  const hasSubject = Boolean(updatedSlotsResolved.targetSubject && updatedSlotsResolved.targetSubject.trim().length > 0);
+  const remainingNeeded = ['targetSubject', 'targetLevelOrOutcome'].filter((k) => !updatedSlotsResolved[k]);
 
-  // 2. Hard Cap (3 rounds max) & Force Proceed Rule
-  const maxRoundsReached = newRoundCount >= 3;
-  const shouldFinalize = maxRoundsReached || isForceProceed || remainingNeeded.length === 0;
+  // 2. Instant Tree Generation Policy & 1-Round Hard Cap
+  const maxRoundsReached = newRoundCount >= 1;
+  const shouldFinalize = hasSubject || maxRoundsReached || isForceProceed || !modelNeedsMoreContext;
 
   const finalNeedsMoreContext = !shouldFinalize;
   const finalClarifyingQuestion = finalNeedsMoreContext
-    ? modelClarifyingQuestion || `Could you clarify your ${remainingNeeded[0]}?`
+    ? modelClarifyingQuestion || `What specific topic or objective would you like to master?`
     : undefined;
 
   // 3. Build objective strictly from validated slots

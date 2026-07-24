@@ -155,6 +155,19 @@ cut and why, findable later by someone who wasn't in this conversation?
 
 ---
 
+## 9. Full Session Memory & State-Lock Integrity
+
+Never execute multi-turn agent workflows on isolated single-message strings. Every multi-turn agent (Diagnosis, Intake, Assessment, Refinement) must receive the full accumulated session transcript (`chatHistory`) and persisted slot state (`DiagnosisSlotState`).
+
+**Engineering Directives:**
+1. **Full History Context**: `buildLearnerState()` must load all session messages from database persistence and pass `conversationHistory` into `DiagnosisAgent` and downstream agents.
+2. **Instant Tree Creation**: As soon as `targetSubject` is present or inferrable in conversation memory (e.g. "Build an LLM", "WAEC Chemistry"), finalize intake immediately on Turn 1. Never pause to ask optional setup questions when the core subject is known.
+3. **Slot Overwrite Guard**: Code-side slot validation (`processSlotUpdate`) must block unprompted overwrites to confirmed slots unless `isCorrection` is explicitly `true`.
+
+**Check:** Does the agent call include the full accumulated `chatHistory` from database persistence, and does it generate the learning map on Turn 1 when `targetSubject` is present? If not, reject the turn execution.
+
+---
+
 ## After Any Major Change — One Pass of Self-Critique
 
 Before calling work done, review it once from outside your own reasoning:
