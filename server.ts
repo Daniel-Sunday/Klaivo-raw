@@ -423,6 +423,59 @@ app.post('/api/sessions/:id/diagnose', async (req: Request, res: Response): Prom
     }
 
     await db.createMessage(sessionId, null, 'user', text);
+
+    // HARD GATE: If curriculum tree already exists for this session (status === 'learning'),
+    // DO NOT invoke DiagnosisAgent, CurriculumDrafter, CurriculumVerifier, or db.saveNodes.
+    if (session.status === 'learning') {
+      console.log(`[server] Hard Gate: Session ${sessionId} is in 'learning' mode. Bypassing tree-building pipeline.`);
+      const existingNodes = await db.getNodes(sessionId);
+      const sessionMessages = await db.getMessages(sessionId);
+      const historyText = sessionMessages
+        .slice(-6)
+        .map((m) => `${m.sender.toUpperCase()}: ${m.content}`)
+        .join('\n');
+
+      let explanationText: string;
+      try {
+        const provider = getModelProvider();
+        const systemInstruction = `You are Klaivo's AI tutor for the learning objective: "${session.title}".
+The learner has an active curriculum tree and is asking a question in the main session chat.
+Provide a helpful, direct, and concise explanation answering their question. Do NOT output debug text or alter curriculum nodes.`;
+
+        const userPrompt = `Learning Objective: "${session.title}"
+User Question: "${text}"
+${historyText ? `Recent Conversation:\n${historyText}` : ''}`;
+
+        explanationText = await provider.generateText(userPrompt, systemInstruction);
+      } catch (genErr: any) {
+        console.error('[server] Error generating post-curriculum Q&A explanation:', genErr);
+        explanationText = "Sorry, I couldn't generate a response — try asking again.";
+      }
+
+      await db.createMessage(sessionId, null, 'assistant', explanationText);
+
+      const isStream = req.headers.accept?.includes('text/event-stream') || req.query.stream === 'true';
+      if (isStream) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.write(`event: pipeline_complete\ndata: ${JSON.stringify({
+          status: 'learning',
+          title: session.title,
+          response: explanationText,
+          nodes: existingNodes,
+        })}\n\n`);
+        return res.end();
+      }
+
+      return res.json({
+        status: 'learning',
+        title: session.title,
+        response: explanationText,
+        nodes: existingNodes,
+      });
+    }
+
     const learnerState = await buildLearnerState(sessionId, session);
 
     const isStream = req.headers.accept?.includes('text/event-stream') || req.query.stream === 'true';

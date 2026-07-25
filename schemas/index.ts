@@ -232,6 +232,7 @@ export const DiagnosisSlotStateSchema = z.object({
   // Follow-up turns reuse this instead of re-running Intent Agent on an isolated
   // fragment of text, which produced false low-confidence "needs_clarification" loops.
   lockedIntent: z.string().optional(),
+  treeAlreadyCreated: z.boolean().optional(),
 });
 export type DiagnosisSlotState = z.infer<typeof DiagnosisSlotStateSchema>;
 

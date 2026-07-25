@@ -124,6 +124,27 @@ export class KlaivoOrchestrator {
       blockedOverwrites: [],
     };
 
+    // HARD GATE: Block tree drafting if tree is already created for session
+    if (currentSlotState.treeAlreadyCreated) {
+      console.log('[Orchestrator] Hard Gate: Tree already created for this session — blocking DiagnosisAgent & CurriculumDrafter.');
+      let explanationText: string;
+      try {
+        const provider = getModelProvider();
+        explanationText = await provider.generateText(
+          `User Message: "${userMessage}"`,
+          `You are Klaivo's AI tutor. Answer the user's question directly without drafting a new curriculum tree.`
+        );
+      } catch (err) {
+        explanationText = "Sorry, I couldn't generate a response — try asking again.";
+      }
+      return {
+        status: 'light_response',
+        intent: 'quick_answer',
+        response: explanationText,
+        slotState: currentSlotState,
+      };
+    }
+
     // Step 1: Intent Agent
     let intent: string;
 
@@ -310,6 +331,8 @@ Learner vocabulary level: ${learnerState.vocabularyLevel || 'intermediate'}`;
         onProgress({ agent: 'CurriculumVerifier', status: 'error', thought: 'Verifier timeout — showing best draft with unverified markers.', payload: { skeleton } });
       }
     }
+
+    slotUpdate.updatedState.treeAlreadyCreated = true;
 
     return {
       status: 'tree_created',

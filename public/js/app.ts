@@ -1147,7 +1147,9 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         // ── Diagnosis / discovery context with real SSE streaming ──
         activateSplitScreen();
-        canvas.showThinking('DiagnosisAgent', 'Processing your response...');
+        if (nodes.length === 0) {
+          canvas.showThinking('DiagnosisAgent', 'Processing your response...');
+        }
 
         let finalData: any = null;
 

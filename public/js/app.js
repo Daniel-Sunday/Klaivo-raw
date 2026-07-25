@@ -9323,7 +9323,9 @@ This will clear chat history for this concept node so you can re-learn it from s
           }
         } else {
           activateSplitScreen();
-          canvas.showThinking("DiagnosisAgent", "Processing your response...");
+          if (nodes.length === 0) {
+            canvas.showThinking("DiagnosisAgent", "Processing your response...");
+          }
           let finalData = null;
           await readSseStream(`/api/sessions/${sessionId}/diagnose?stream=true`, {
             method: "POST",

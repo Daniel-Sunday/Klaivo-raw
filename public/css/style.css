@@ -465,15 +465,20 @@ body {
 
 /* Header */
 header.app-header {
-  height: 36px;
-  border-bottom: none;
+  position: absolute;
+  top: 10px;
+  right: 16px;
+  z-index: 100;
+  height: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
   background: transparent;
   backdrop-filter: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 4px 16px;
-  z-index: 10;
+  justify-content: flex-end;
+  pointer-events: none;
 }
 
 .header-right-cluster {
@@ -481,6 +486,7 @@ header.app-header {
   align-items: center;
   gap: 8px;
   margin-left: auto;
+  pointer-events: auto;
 }
 
 .header-split-toggle-btn {
@@ -1029,8 +1035,8 @@ header.app-header {
   position: absolute;
   top: 14px;
   z-index: 25;
-  background: rgba(24, 26, 28, 0.95);
-  border: 1px solid var(--panel-border);
+  background: rgba(15, 16, 17, 0.95);
+  border: 1px solid rgba(214, 213, 212, 0.08);
   color: var(--text-secondary);
   width: 26px;
   height: 26px;
@@ -1048,8 +1054,8 @@ header.app-header {
 .gutter-toggle-btn:hover {
   opacity: 1;
   color: var(--text-primary);
-  border-color: rgba(255, 255, 255, 0.2);
-  background: #1f2124;
+  border-color: rgba(214, 213, 212, 0.2);
+  background: rgba(255, 255, 255, 0.1);
   transform: scale(1.08);
 }
 
@@ -1058,8 +1064,8 @@ header.app-header {
   position: absolute;
   top: 20px;
   z-index: 15;
-  background: rgba(24, 26, 28, 0.9);
-  border: 1px solid var(--accent-primary);
+  background: rgba(15, 16, 17, 0.95);
+  border: 1px solid rgba(214, 213, 212, 0.14);
   color: var(--text-primary);
   padding: 8px 14px;
   border-radius: 10px;
@@ -1084,7 +1090,8 @@ header.app-header {
 }
 
 .expand-panel-btn:hover {
-  background: var(--accent-primary);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
   transform: translateY(-1px);
 }
 
@@ -1210,15 +1217,15 @@ header.app-header {
 
 /* Code block & Markdown syntax styling inside AI messages */
 .message-bubble pre {
-  background: rgba(20, 22, 24, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(214, 213, 212, 0.04);
+  border: 1px solid rgba(214, 213, 212, 0.12);
   border-radius: 10px;
   padding: 14px 16px;
   margin: 12px 0;
   overflow-x: auto;
-  font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-family: var(--font-mono);
   font-size: 0.88rem;
-  color: #e5e7eb;
+  color: #ffffff;
   line-height: 1.5;
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
 }
@@ -1233,10 +1240,10 @@ header.app-header {
 
 .message-bubble code {
   background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(214, 213, 212, 0.12);
   padding: 2px 6px;
   border-radius: 4px;
-  font-family: 'Fira Code', monospace;
+  font-family: var(--font-mono);
   font-size: 0.86rem;
   color: #ffffff;
 }
@@ -1307,8 +1314,8 @@ header.app-header {
 
 /* Monospaced Code Blocks inside Assistant Explanations */
 .assistant .message-bubble pre {
-  background: #121416;
-  border: 1px solid var(--panel-border);
+  background: rgba(214, 213, 212, 0.04);
+  border: 1px solid rgba(214, 213, 212, 0.12);
   border-radius: 10px;
   padding: 12px 14px;
   margin: 12px 0;
@@ -1316,7 +1323,7 @@ header.app-header {
   font-family: var(--font-mono);
   font-size: 0.88rem;
   line-height: 1.5;
-  color: #e2e8f0;
+  color: #ffffff;
 }
 
 .assistant .message-bubble code {
@@ -1730,8 +1737,8 @@ header.app-header {
 /* Discovery Mode & Full AI Text Mode layout rules */
 #workspace-screen.discovery-mode,
 #workspace-screen.chat-only-mode {
-  background: var(--bg-dark);
-  justify-content: center;
+  background: rgba(214, 213, 212, 0.035);
+  backdrop-filter: blur(20px);
 }
 
 #workspace-screen.discovery-mode .canvas-panel,
@@ -1744,11 +1751,25 @@ header.app-header {
 #workspace-screen.discovery-mode .chat-sidebar,
 #workspace-screen.chat-only-mode .chat-sidebar {
   width: 100% !important;
-  max-width: 780px;
-  margin: 0 auto;
+  max-width: 100% !important;
+  margin: 0 !important;
   border-right: none;
   background: transparent;
   box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+#workspace-screen.discovery-mode .sidebar-header,
+#workspace-screen.discovery-mode .chat-history,
+#workspace-screen.discovery-mode .sidebar-input-area,
+#workspace-screen.chat-only-mode .sidebar-header,
+#workspace-screen.chat-only-mode .chat-history,
+#workspace-screen.chat-only-mode .sidebar-input-area {
+  width: 100%;
+  max-width: 800px;
+  box-sizing: border-box;
 }
 
 /* In discovery mode: hide the node context header (title/badge) */
@@ -1771,16 +1792,16 @@ header.app-header {
 }
 
 #workspace-screen.discovery-mode .input-box-wrapper {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(214, 213, 212, 0.12);
+  background: rgba(214, 213, 212, 0.035);
   border-radius: 16px;
   padding: 12px 16px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
 }
 
 #workspace-screen.discovery-mode .input-box-wrapper:focus-within {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.15), 0 4px 24px rgba(0, 0, 0, 0.3);
+  border-color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2), 0 4px 24px rgba(0, 0, 0, 0.3);
 }
 
 /* Inline thinking indicator dots animation */
@@ -1849,9 +1870,9 @@ header.app-header {
   width: 440px;
   max-width: calc(100% - 32px);
   max-height: calc(100% - 32px);
-  background: rgba(18, 20, 26, 0.95);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(15, 16, 17, 0.96);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(214, 213, 212, 0.14);
   border-radius: 16px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
   z-index: 100;
@@ -1869,7 +1890,7 @@ header.app-header {
 .sandbox-header {
   padding: 14px 18px;
   background: rgba(255, 255, 255, 0.04);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(214, 213, 212, 0.08);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1884,7 +1905,7 @@ header.app-header {
 .sandbox-badge {
   font-size: 11px;
   font-weight: 600;
-  color: var(--accent-primary, #60a5fa);
+  color: var(--accent-primary, #ffffff);
   letter-spacing: 0.5px;
   text-transform: uppercase;
 }
@@ -1899,7 +1920,7 @@ header.app-header {
 .sandbox-close-btn {
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(214, 213, 212, 0.6);
   font-size: 22px;
   cursor: pointer;
   padding: 0 6px;
@@ -1923,7 +1944,7 @@ header.app-header {
 .sandbox-instructions h5 {
   margin: 0 0 6px 0;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.85);
+  color: #ffffff;
   font-weight: 600;
 }
 
@@ -1931,42 +1952,42 @@ header.app-header {
   margin: 0;
   font-size: 13px;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(214, 213, 212, 0.85);
 }
 
 .sandbox-rubric {
   margin-top: 10px;
   padding: 8px 12px;
   background: rgba(255, 255, 255, 0.04);
-  border-left: 3px solid #3b82f6;
+  border-left: 3px solid rgba(214, 213, 212, 0.4);
   border-radius: 4px;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(214, 213, 212, 0.85);
 }
 
 .sandbox-editor-wrapper {
   display: flex;
   flex-direction: column;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(214, 213, 212, 0.12);
   border-radius: 10px;
   overflow: hidden;
 }
 
 .sandbox-editor-header {
   padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(255, 255, 255, 0.04);
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(214, 213, 212, 0.65);
   font-family: monospace;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(214, 213, 212, 0.08);
 }
 
 .sandbox-editor-textarea {
   width: 100%;
   min-height: 120px;
   padding: 12px;
-  background: #0f1117;
-  color: #e2e8f0;
+  background: rgba(214, 213, 212, 0.035);
+  color: #ffffff;
   border: none;
   font-family: monospace;
   font-size: 13px;
@@ -2048,15 +2069,15 @@ header.app-header {
   z-index: 50;
   width: 320px;
   max-width: calc(100% - 40px);
-  background: rgba(14, 16, 20, 0.82);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(15, 16, 17, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(214, 213, 212, 0.12);
   border-radius: 14px;
   padding: 12px 16px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   font-family: var(--font-sans);
-  color: #e2e8f0;
+  color: rgba(214, 213, 212, 0.88);
   pointer-events: none;
   transform: translateZ(0);
   will-change: transform, opacity;
