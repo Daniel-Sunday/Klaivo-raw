@@ -13,7 +13,9 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.110.7",
+    "@types/dagre": "^0.7.54",
     "better-sqlite3": "^11.1.2",
+    "dagre": "^0.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "multer": "^1.4.5-lts.1",

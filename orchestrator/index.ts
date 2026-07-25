@@ -12,6 +12,7 @@ import {
   processSlotUpdate,
   validateAssessmentResult,
 } from '../schemas';
+import { getModelProvider } from '../providers/modelProvider';
 import { runIntentAgent, IntentAgentOutput } from '../agents/intentAgent';
 import { runDiagnosisAgent, DiagnosisAgentOutput } from '../agents/diagnosisAgent';
 import { runCurriculumDrafter } from '../agents/curriculumDrafter';
@@ -165,10 +166,24 @@ export class KlaivoOrchestrator {
 
       // Guardrail 2: Short-Circuit Non-Tree Intents (first turn only)
       if (intent === 'quick_answer' || intent === 'problem_solving' || intent === 'research') {
+        let lightResponseText: string;
+        try {
+          const provider = getModelProvider();
+          const systemInstruction = `You are Klaivo's AI tutor assisting a learner with a direct request (Intent: ${intent}).
+Provide a direct, thorough, clear, and helpful explanation answering their question or solving their problem directly without building a curriculum tree.
+Use Markdown formatting for structure.`;
+          const userPrompt = `Learner message: "${userMessage}"
+Learner vocabulary level: ${learnerState.vocabularyLevel || 'intermediate'}`;
+          lightResponseText = await provider.generateText(userPrompt, systemInstruction);
+        } catch (err: any) {
+          console.error(`[Orchestrator] Direct ${intent} response LLM generation failed:`, err);
+          lightResponseText = "Sorry, I couldn't generate a response — try asking again.";
+        }
+
         return {
           status: 'light_response',
           intent,
-          response: `Direct ${intent} response generated without tree drafting.`,
+          response: lightResponseText,
           slotState: currentSlotState,
         };
       }

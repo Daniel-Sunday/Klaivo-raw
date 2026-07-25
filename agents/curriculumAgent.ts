@@ -21,14 +21,11 @@ export async function generateCurriculum(sessionSummary: DiagnosisAgentSummary):
     Rules for path generation:
     1. Output between 5 and 7 nodes.
     2. Sequence them logically: node_1 should be the absolute foundational node.
-    3. Specify dependencies for each node (e.g. node_2 depends on node_1; node_5 depends on node_3 and node_4).
-    4. Provide coordinate mappings (x, y) where:
-       - The canvas is 1000 width by 800 height.
-       - Nodes flow diagonally starting from the bottom-left and moving to the top-right.
-       - The first node (index 0) starts near x=100, y=600.
-       - Succeeding nodes must increase in X (moving right) and decrease in Y (moving up) to represent progression.
-       - Branching paths (parallel concepts) are highly encouraged where concepts can be learned concurrently, then merging later.
-      5. The first node (order_index: 0) must have status: "available" and dependencies: []. All other nodes must have status: "locked".
+    3. Specify relationships for each node:
+       - 'prerequisite': concept MUST be understood before this node makes sense (determines structural layout flow).
+       - 'related': concept is connected or relevant, but NOT required first (visual secondary connection).
+    4. Provide dependencies (list of prerequisite node IDs for backward compatibility) and an edges array.
+    5. The first node (order_index: 0) must have status: "available" and dependencies: []. All other nodes must have status: "locked".
     
     Return a JSON array of nodes matching this schema:
     [
@@ -37,8 +34,10 @@ export async function generateCurriculum(sessionSummary: DiagnosisAgentSummary):
         "title": "Clean Concept Name",
         "description": "Brief description of what will be taught in this node (under 12 words)",
         "dependencies": [],
-        "x": 100,
-        "y": 600,
+        "edges": [
+          { "from": "node_1", "to": "node_2", "type": "prerequisite" },
+          { "from": "node_1", "to": "node_4", "type": "related" }
+        ],
         "status": "available",
         "order_index": 0
       },

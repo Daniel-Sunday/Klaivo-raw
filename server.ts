@@ -16,6 +16,8 @@ import { processUploadedArtifact } from './utils/ragIngestion';
 import { generateTaskSimulation, evaluateTaskSubmission } from './agents/taskSimulationAgent';
 import { addEvidenceSignal, computeAdvisoryNodeBadges } from './utils/evidenceEngine';
 import { generateSessionTitle } from './utils/sessionTitler';
+import { classifyMessageIntent } from './agents/routingAgent';
+import { getModelProvider } from './providers/modelProvider';
 
 const projectRoot = fs.existsSync(path.join(__dirname, 'public'))
   ? __dirname
@@ -83,6 +85,20 @@ export function mapTreeSkeletonToCurriculumNodes(sessionId: string, skeleton: Tr
   const colSpacing = 280;
   const rowSpacing = 130;
 
+  const allEdges: Array<{ from: string; to: string; type: 'prerequisite' | 'related' }> = (skeleton.edges || []).map(e => ({
+    from: e.from,
+    to: e.to,
+    type: (e as any).type === 'related' ? 'related' : 'prerequisite'
+  }));
+
+  if (allEdges.length === 0) {
+    skeleton.nodes.forEach(node => {
+      (node.prerequisiteIds || []).forEach(pId => {
+        allEdges.push({ from: pId, to: node.id, type: 'prerequisite' });
+      });
+    });
+  }
+
   return skeleton.nodes.map((node, index) => {
     const lvl = levelMap[node.id] || 0;
     const group = levelGroups[lvl] || [node];
@@ -105,6 +121,7 @@ export function mapTreeSkeletonToCurriculumNodes(sessionId: string, skeleton: Tr
       x,
       y,
       dependencies: node.prerequisiteIds || [],
+      edges: allEdges,
       status: uiStatus,
       order_index: index,
     };
@@ -704,6 +721,60 @@ app.post('/api/sessions/:id/nodes/:nodeId/message', async (req: Request, res: Re
 
     await db.createMessage(id, nodeId, 'user', answer);
 
+    // 1. Classify message intent: follow-up question vs assessment answer
+    const nodeTemplate = {
+      id: targetDbNode.id,
+      title: targetDbNode.title,
+      description: targetDbNode.description || '',
+      status: targetDbNode.status,
+      dependencies: targetDbNode.dependencies || [],
+      x: targetDbNode.x || 0,
+      y: targetDbNode.y || 0,
+      order_index: targetDbNode.order_index || 0,
+    };
+    const intent = await classifyMessageIntent(nodeTemplate, answer);
+    console.log(`[server] Node message intent classified as: "${intent}" for user message: "${answer.slice(0, 50)}"`);
+
+    if (intent === 'question') {
+      // 2. User asked a follow-up question on the node concept — generate contextual LLM explanation
+      const nodeMessages = await db.getMessages(id, nodeId);
+      const historyText = nodeMessages
+        .slice(-6)
+        .map((m) => `${m.sender.toUpperCase()}: ${m.content}`)
+        .join('\n');
+
+      let explanationText: string;
+      try {
+        const provider = getModelProvider();
+        const systemInstruction = `You are Klaivo's AI tutor assisting a learner studying the concept: "${targetDbNode.title}".
+Description/Summary: "${targetDbNode.description || ''}"
+
+The learner is asking a follow-up question, seeking clarification, or expressing confusion about this concept.
+Provide a direct, clear, encouraging, and thorough explanation that directly answers their question, addresses their confusion, and builds genuine understanding.
+Do NOT output any placeholder/debug text. Use Markdown for clarity.`;
+
+        const userPrompt = `Concept Node: "${targetDbNode.title}"
+Learner Question / Comment: "${answer}"
+${historyText ? `Recent Chat History:\n${historyText}` : ''}`;
+
+        explanationText = await provider.generateText(userPrompt, systemInstruction);
+      } catch (genError: any) {
+        console.error('[server] Error generating LLM follow-up explanation:', genError);
+        explanationText = "Sorry, I couldn't generate a response — try asking again.";
+      }
+
+      await db.createMessage(id, nodeId, 'assistant', explanationText);
+      return res.json({
+        passed: false,
+        feedback: explanationText,
+        nodesUpdated: false,
+        nodes: dbNodes,
+        calibration: session.calibration,
+        isAssessment: false,
+      });
+    }
+
+    // 3. User is answering an assessment prompt — run assessment workflow
     const learnerState = await buildLearnerState(id, session);
     const mockTree: TreeSkeleton = {
       treeId: `tree_${id}`,

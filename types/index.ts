@@ -21,6 +21,12 @@ export interface Session {
   updated_at?: string;
 }
 
+export interface CurriculumNodeEdge {
+  from: string;
+  to: string;
+  type: 'prerequisite' | 'related';
+}
+
 export interface CurriculumNode {
   id: string;
   session_id?: string;
@@ -29,6 +35,7 @@ export interface CurriculumNode {
   x: number;
   y: number;
   dependencies: string[];
+  edges?: CurriculumNodeEdge[];
   status: 'locked' | 'available' | 'completed' | 'active' | 'in_progress';
   order_index: number;
   is_starred?: boolean;

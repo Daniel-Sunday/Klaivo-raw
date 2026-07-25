@@ -71,6 +71,9 @@ export async function initDb(): Promise<void> {
   try {
     sqliteDb.exec(`ALTER TABLE nodes ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0`);
   } catch (_) {}
+  try {
+    sqliteDb.exec(`ALTER TABLE nodes ADD COLUMN edges TEXT NOT NULL DEFAULT '[]'`);
+  } catch (_) {}
   sqliteDb.exec(`
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -314,14 +317,15 @@ export async function saveNodes(sessionId: string, nodes: Omit<CurriculumNode, '
   }
 
   const stmt = sqliteDb.prepare(`
-    INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, status, order_index)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO nodes (id, session_id, title, description, x, y, dependencies, edges, status, order_index)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id, session_id) DO UPDATE SET
       title=excluded.title,
       description=excluded.description,
       x=excluded.x,
       y=excluded.y,
       dependencies=excluded.dependencies,
+      edges=excluded.edges,
       status=excluded.status,
       order_index=excluded.order_index
   `);
@@ -334,7 +338,8 @@ export async function saveNodes(sessionId: string, nodes: Omit<CurriculumNode, '
         node.description,
         node.x,
         node.y,
-        JSON.stringify(node.dependencies),
+        JSON.stringify(node.dependencies || []),
+        JSON.stringify(node.edges || []),
         node.status,
         node.order_index
       );
@@ -356,6 +361,7 @@ export async function getNodes(sessionId: string): Promise<CurriculumNode[]> {
   const sqliteNodes = sqliteRows.map((row: any) => ({
     ...row,
     dependencies: typeof row.dependencies === 'string' ? JSON.parse(row.dependencies) : row.dependencies,
+    edges: typeof row.edges === 'string' ? JSON.parse(row.edges) : row.edges || [],
   }));
 
   if (supabase) {

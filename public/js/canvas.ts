@@ -1,4 +1,5 @@
-import { CurriculumNode } from '../../types';
+import * as dagre from 'dagre';
+import { CurriculumNode, CurriculumNodeEdge } from '../../types';
 
 export class ConceptCanvas {
   private svg: SVGSVGElement;
@@ -18,6 +19,11 @@ export class ConceptCanvas {
   private thinkingHudEl: HTMLElement | null = null;
   private thinkingAgentEl: HTMLElement | null = null;
   private thinkingStreamEl: HTMLElement | null = null;
+
+  // Dagre layout configuration & hover tooltip state
+  private rankDir: 'BT' | 'LR' = 'BT';
+  private hoverTimer: any = null;
+  private activeTooltip: HTMLElement | null = null;
   
   constructor(svgId: string) {
     this.svg = document.getElementById(svgId) as unknown as SVGSVGElement;
@@ -31,6 +37,18 @@ export class ConceptCanvas {
     
     this.initDefs();
     this.initEvents();
+  }
+
+  /** Set rank direction for Dagre layout ('BT' for Bottom-to-Top, 'LR' for Left-to-Right) */
+  public setRankDir(dir: 'BT' | 'LR'): void {
+    this.rankDir = dir;
+    if (this.nodes && this.nodes.length > 0) {
+      this.render(this.nodes, false);
+    }
+  }
+
+  public getRankDir(): 'BT' | 'LR' {
+    return this.rankDir;
   }
 
   /** Initialize SVG Defs (Patterns, Gradients, Filters) */
@@ -151,6 +169,11 @@ export class ConceptCanvas {
     }
   }
 
+  /**
+   * Step 2 — Fit-to-view auto-centering.
+   * Calculates the bounding box of all nodes and updates zoom & pan so the entire tree
+   * fits nicely inside the canvas with ~12% padding.
+   */
   private autoCenterTree(nodes: CurriculumNode[]): void {
     if (!nodes || nodes.length === 0 || !this.svg) return;
 
@@ -170,11 +193,14 @@ export class ConceptCanvas {
     const graphW = maxX - minX;
     const graphH = maxY - minY;
 
-    const padding = 80;
-    const scaleX = (svgW - padding * 2) / (graphW || 1);
-    const scaleY = (svgH - padding * 2) / (graphH || 1);
+    // 12% padding on all sides
+    const paddingX = Math.max(40, svgW * 0.1);
+    const paddingY = Math.max(40, svgH * 0.1);
 
-    this.zoom = Math.min(Math.max(Math.min(scaleX, scaleY), 0.65), 1.1);
+    const scaleX = (svgW - paddingX * 2) / (graphW || 1);
+    const scaleY = (svgH - paddingY * 2) / (graphH || 1);
+
+    this.zoom = Math.min(Math.max(Math.min(scaleX, scaleY), 0.45), 1.25);
 
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
@@ -257,6 +283,68 @@ export class ConceptCanvas {
     this.onNodeClickCallback = callback;
   }
 
+  /**
+   * Step 1 — Dagre Layout Computation.
+   * Feeds nodes (210x86) and PREREQUISITE edges only into Dagre graph for layout.
+   */
+  private computeDagreLayout(nodes: CurriculumNode[]): void {
+    if (!nodes || nodes.length === 0) return;
+
+    const g = new dagre.graphlib.Graph();
+    g.setGraph({
+      rankdir: this.rankDir,
+      nodesep: 45,
+      ranksep: 75,
+      marginx: 40,
+      marginy: 40,
+    });
+    g.setDefaultEdgeLabel(() => ({}));
+
+    // 1. Add nodes with exact card width (210) and height (86)
+    nodes.forEach(n => {
+      g.setNode(n.id, { width: 210, height: 86 });
+    });
+
+    // 2. Add ONLY prerequisite edges into Dagre layout
+    const addedPrereqEdges = new Set<string>();
+
+    nodes.forEach(n => {
+      // Add edges from node.edges if present
+      if (n.edges && Array.isArray(n.edges)) {
+        n.edges.forEach(e => {
+          if (e.type !== 'related') {
+            const key = `${e.from}->${e.to}`;
+            if (!addedPrereqEdges.has(key)) {
+              addedPrereqEdges.add(key);
+              g.setEdge(e.from, e.to);
+            }
+          }
+        });
+      }
+      // Fallback: Add edges from node.dependencies
+      if (n.dependencies && Array.isArray(n.dependencies)) {
+        n.dependencies.forEach(depId => {
+          const key = `${depId}->${n.id}`;
+          if (!addedPrereqEdges.has(key)) {
+            addedPrereqEdges.add(key);
+            g.setEdge(depId, n.id);
+          }
+        });
+      }
+    });
+
+    dagre.layout(g);
+
+    // 3. Read back computed center coordinates and convert to top-left (x, y)
+    nodes.forEach(n => {
+      const dagreNode = g.node(n.id);
+      if (dagreNode) {
+        n.x = dagreNode.x - 210 / 2;
+        n.y = dagreNode.y - 86 / 2;
+      }
+    });
+  }
+
   public render(nodes: CurriculumNode[], animate: boolean = true): void {
     const oldNodes = this.nodes;
     this.nodes = nodes;
@@ -281,67 +369,132 @@ export class ConceptCanvas {
       }
     });
 
+    // Step 1: Run Dagre layout computation
+    this.computeDagreLayout(nodes);
+
     this.nodesGroup.innerHTML = '';
     this.edgesGroup.innerHTML = '';
 
-    // 1. Draw Paths / Edges
     const nodeMap: Record<string, CurriculumNode> = {};
     nodes.forEach(n => { nodeMap[n.id] = n; });
 
+    // Step 3: Distinguish prerequisite edges from related edges
+    const drawnEdges = new Set<string>();
+
     nodes.forEach(node => {
+      // 1. Explicit edges from node.edges
+      if (node.edges && Array.isArray(node.edges)) {
+        node.edges.forEach(edge => {
+          const key = `${edge.from}->${edge.to}:${edge.type}`;
+          if (!drawnEdges.has(key)) {
+            drawnEdges.add(key);
+            const pNode = nodeMap[edge.from];
+            const cNode = nodeMap[edge.to];
+            if (pNode && cNode) {
+              this.drawConnection(pNode, cNode, edge.type, animate);
+            }
+          }
+        });
+      }
+
+      // 2. Fallback prerequisite edges from node.dependencies
       if (node.dependencies && Array.isArray(node.dependencies)) {
         node.dependencies.forEach(depId => {
-          const parentNode = nodeMap[depId];
-          if (parentNode) {
-            this.drawConnection(parentNode, node, animate);
+          const key = `${depId}->${node.id}:prerequisite`;
+          if (!drawnEdges.has(key)) {
+            drawnEdges.add(key);
+            const pNode = nodeMap[depId];
+            if (pNode) {
+              this.drawConnection(pNode, node, 'prerequisite', animate);
+            }
           }
         });
       }
     });
 
-    // 2. Draw Nodes
+    // Draw Nodes
     nodes.forEach(node => {
       this.drawNode(node, animate);
     });
 
-    // 3. Auto center view
+    // Step 2: Fit-to-view auto center
     this.autoCenterTree(nodes);
   }
 
-  private drawConnection(parent: CurriculumNode, child: CurriculumNode, animate: boolean = true): void {
+  /**
+   * Render edge connections with layout-direction-aware endpoints and secondary styling for related edges.
+   */
+  private drawConnection(
+    parent: CurriculumNode,
+    child: CurriculumNode,
+    edgeType: 'prerequisite' | 'related',
+    animate: boolean = true
+  ): void {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     
-    // Connect from right edge of parent to left edge of child
-    const pX = parent.x + 210;
-    const pY = parent.y + 43;
-    const cX = child.x;
-    const cY = child.y + 43;
-    
-    const dx = Math.abs(cX - pX) * 0.5;
-    const dStr = `M ${pX} ${pY} C ${pX + dx} ${pY}, ${cX - dx} ${cY}, ${cX} ${cY}`;
+    let pX: number, pY: number, cX: number, cY: number;
+
+    if (this.rankDir === 'BT') {
+      // Bottom to Top progression: parent is lower Y, child is higher Y (or vice versa in Dagre BT)
+      // Parent top edge center
+      pX = parent.x + 105;
+      pY = parent.y;
+      // Child bottom edge center
+      cX = child.x + 105;
+      cY = child.y + 86;
+    } else {
+      // Left to Right progression: parent right edge, child left edge
+      pX = parent.x + 210;
+      pY = parent.y + 43;
+      cX = child.x;
+      cY = child.y + 43;
+    }
+
+    let dStr = '';
+    if (this.rankDir === 'BT') {
+      const dy = Math.abs(cY - pY) * 0.5;
+      dStr = `M ${pX} ${pY} C ${pX} ${pY - dy}, ${cX} ${cY + dy}, ${cX} ${cY}`;
+    } else {
+      const dx = Math.abs(cX - pX) * 0.5;
+      dStr = `M ${pX} ${pY} C ${pX + dx} ${pY}, ${cX - dx} ${cY}, ${cX} ${cY}`;
+    }
     
     path.setAttribute('d', dStr);
-    path.setAttribute('class', `svg-edge-path ${child.status}`);
-    
-    if (child.status === 'completed') {
-      path.setAttribute('stroke', '#10b981');
-    } else if (child.status === 'active' || child.status === 'available') {
-      path.setAttribute('stroke', '#ffffff');
+
+    if (edgeType === 'related') {
+      // Step 3 — Related edges: visually distinct secondary style (dashed, lower opacity, no arrowhead)
+      path.setAttribute('class', `svg-edge-path related`);
+      path.setAttribute('stroke', 'rgba(148, 163, 184, 0.55)');
+      path.setAttribute('stroke-dasharray', '6 4');
+      path.setAttribute('stroke-width', '1.8');
+      path.setAttribute('fill', 'none');
     } else {
-      path.setAttribute('stroke', 'rgba(255, 255, 255, 0.12)');
+      // Prerequisite edge: primary solid connection with status color
+      path.setAttribute('class', `svg-edge-path ${child.status}`);
+      
+      if (child.status === 'completed') {
+        path.setAttribute('stroke', '#10b981');
+      } else if (child.status === 'active' || child.status === 'available') {
+        path.setAttribute('stroke', '#ffffff');
+      } else {
+        path.setAttribute('stroke', 'rgba(255, 255, 255, 0.15)');
+      }
+
+      if (animate) {
+        const length = Math.ceil(path.getTotalLength ? (path.getTotalLength() || 300) : 300);
+        path.style.setProperty('--path-len', `${length}`);
+        path.classList.add('animated');
+        const edgeDelay = Math.max(0, (child.order_index - 0.5) * 180);
+        path.style.animationDelay = `${edgeDelay}ms`;
+      }
     }
     
     this.edgesGroup.appendChild(path);
-
-    if (animate) {
-      const length = Math.ceil(path.getTotalLength ? (path.getTotalLength() || 300) : 300);
-      path.style.setProperty('--path-len', `${length}`);
-      path.classList.add('animated');
-      const edgeDelay = Math.max(0, (child.order_index - 0.5) * 180);
-      path.style.animationDelay = `${edgeDelay}ms`;
-    }
   }
 
+  /**
+   * Step 4 — Hover-to-expand with 180ms delay.
+   */
   private drawNode(node: CurriculumNode, animate: boolean = true): void {
     const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     group.setAttribute('class', `svg-node-group ${node.status}`);
@@ -353,7 +506,6 @@ export class ConceptCanvas {
       const nodeDelay = Math.max(0, node.order_index * 180);
       group.style.animationDelay = `${nodeDelay}ms`;
     }
-    group.setAttribute('id', `node-group-${node.id}`);
     
     const width = 210;
     const height = 86;
@@ -430,7 +582,7 @@ export class ConceptCanvas {
 
     group.appendChild(badgeGroup);
 
-    // 7. Title Text
+    // 7. Title Text (Compact representation on card)
     const titleText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     titleText.setAttribute('x', String(node.x + 68));
     titleText.setAttribute('y', String(node.y + 49));
@@ -441,7 +593,7 @@ export class ConceptCanvas {
     titleText.textContent = title;
     group.appendChild(titleText);
     
-    // 8. Description Subtext
+    // 8. Description Subtext (Compact representation on card)
     const descText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     descText.setAttribute('x', String(node.x + 68));
     descText.setAttribute('y', String(node.y + 66));
@@ -452,14 +604,86 @@ export class ConceptCanvas {
     descText.textContent = desc;
     group.appendChild(descText);
 
-    // Event listener — Learner Autonomy: Allow clicking any node for exploration or challenge
+    // Step 4: Hover-to-expand full title & description with 180ms debounce
+    group.addEventListener('mouseenter', (e: MouseEvent) => {
+      if (this.hoverTimer) clearTimeout(this.hoverTimer);
+      this.hoverTimer = setTimeout(() => {
+        this.showHoverTooltip(node, e);
+      }, 180);
+    });
+
+    group.addEventListener('mousemove', (e: MouseEvent) => {
+      if (this.activeTooltip) {
+        this.updateTooltipPosition(e);
+      }
+    });
+
+    group.addEventListener('mouseleave', () => {
+      if (this.hoverTimer) clearTimeout(this.hoverTimer);
+      this.hideHoverTooltip();
+    });
+
+    // Learner Autonomy: Click node to open thread (does NOT interfere with hover)
     group.addEventListener('click', () => {
+      this.hideHoverTooltip();
       if (this.onNodeClickCallback) {
         this.onNodeClickCallback(node);
       }
     });
 
     this.nodesGroup.appendChild(group);
+  }
+
+  /** Display sleek dark glassmorphic tooltip with full node details */
+  private showHoverTooltip(node: CurriculumNode, e: MouseEvent): void {
+    this.hideHoverTooltip();
+
+    const tooltip = document.createElement('div');
+    tooltip.className = 'canvas-hover-tooltip';
+    tooltip.innerHTML = `
+      <div class="tooltip-badge">
+        <span>NODE ${node.order_index + 1}</span> • <span style="text-transform:uppercase">${node.status}</span>
+      </div>
+      <div class="tooltip-title">${node.title}</div>
+      <div class="tooltip-desc">${node.description || 'Core concept in this learning path.'}</div>
+    `;
+
+    document.body.appendChild(tooltip);
+    this.activeTooltip = tooltip;
+    this.updateTooltipPosition(e);
+
+    requestAnimationFrame(() => {
+      tooltip.classList.add('visible');
+    });
+  }
+
+  private updateTooltipPosition(e: MouseEvent): void {
+    if (!this.activeTooltip) return;
+    const offset = 14;
+    let x = e.clientX + offset;
+    let y = e.clientY + offset;
+
+    const rect = this.activeTooltip.getBoundingClientRect();
+    if (x + rect.width > window.innerWidth - 16) {
+      x = e.clientX - rect.width - offset;
+    }
+    if (y + rect.height > window.innerHeight - 16) {
+      y = e.clientY - rect.height - offset;
+    }
+
+    this.activeTooltip.style.left = `${Math.max(12, x)}px`;
+    this.activeTooltip.style.top = `${Math.max(12, y)}px`;
+  }
+
+  private hideHoverTooltip(): void {
+    if (this.activeTooltip) {
+      const el = this.activeTooltip;
+      this.activeTooltip = null;
+      el.classList.remove('visible');
+      setTimeout(() => {
+        if (el.parentNode) el.parentNode.removeChild(el);
+      }, 180);
+    }
   }
 
   // --- Vector SVG Icon Helpers ---

@@ -54,6 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const canvasSessionTitle = document.getElementById('canvas-session-title') as HTMLElement;
   const canvasSessionStats = document.getElementById('canvas-session-stats') as HTMLElement;
   const canvas = new ConceptCanvas('concept-svg');
+  (window as any).canvas = canvas;
   const taskSandbox = new TaskSandbox('task-sandbox-container');
 
   // ══════════════════════════════════════════════════

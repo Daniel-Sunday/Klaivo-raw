@@ -90,6 +90,7 @@ export type TreeNode = z.infer<typeof TreeNodeSchema>;
 export const TreeEdgeSchema = z.object({
   from: z.string(),
   to: z.string(),
+  type: z.enum(["prerequisite", "related"]).optional(),
 });
 export type TreeEdge = z.infer<typeof TreeEdgeSchema>;
 

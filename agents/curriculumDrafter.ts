@@ -51,7 +51,7 @@ Schema shape:
     "masteryScore": number,
     "depth": number
   }>,
-  "edges": Array<{ "from": string, "to": string }>,
+  "edges": Array<{ "from": string, "to": string, "type"?: "prerequisite" | "related" }>,
   "verificationStatus": "unverified",
   "verificationNotes": [],
   "version": 1
