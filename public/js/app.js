@@ -8307,19 +8307,19 @@
     getModalityMeta(modality) {
       switch (modality) {
         case "code_challenge":
-          return { badge: "\u{1F4BB} Code Simulation", label: "Solution Code" };
+          return { badge: "\u{1F4BB} CODE SIMULATION", label: "Solution Code" };
         case "exam_rubric_challenge":
-          return { badge: "\u{1F4DD} Exam Rubric Challenge", label: "Written Response" };
+          return { badge: "\u{1F4C4} EXAM RUBRIC CHALLENGE", label: "Written Response" };
         case "scenario_simulation":
-          return { badge: "\u{1F4BC} Strategic Case Scenario", label: "Scenario Analysis & Decision" };
+          return { badge: "\u{1F4BC} STRATEGIC CASE SCENARIO", label: "Scenario Analysis & Decision" };
         case "creative_synthesis_challenge":
-          return { badge: "\u{1F3A8} Creative & Structural Synthesis", label: "Synthesis Response" };
+          return { badge: "\u{1F3A8} CREATIVE SYNTHESIS", label: "Synthesis Response" };
         case "dialogue_simulation":
-          return { badge: "\u{1F4AC} Interactive Dialogue Simulation", label: "Dialogue / Translation" };
+          return { badge: "\u{1F4AC} DIALOGUE SIMULATION", label: "Dialogue / Translation" };
         case "math_proof_challenge":
-          return { badge: "\u{1F4D0} Quantitative Proof Challenge", label: "Step-by-Step Proof" };
+          return { badge: "\u{1F4D0} QUANTITATIVE PROOF CHALLENGE", label: "Step-by-Step Proof" };
         default:
-          return { badge: "\u{1F3AF} Domain Task Challenge", label: "Task Response" };
+          return { badge: "\u{1F3AF} DOMAIN TASK CHALLENGE", label: "Task Response" };
       }
     }
     render(task, onSubmit) {
@@ -8815,11 +8815,17 @@ This will clear chat history for this concept node so you can re-learn it from s
       workspaceScreen.classList.add("discovery-mode");
       if (headerSplitToggleBtn) headerSplitToggleBtn.style.display = "flex";
     }
+    function getBalancedSplitWidth() {
+      const navLeft = appLeftNav ? appLeftNav.getBoundingClientRect().width : 0;
+      const availableWidth = window.innerWidth - navLeft;
+      return Math.max(360, Math.min(Math.round(availableWidth * 0.45), 750));
+    }
     function activateSplitScreen() {
       workspaceScreen.classList.remove("discovery-mode");
       if (toggleSidebarBtn) toggleSidebarBtn.classList.remove("hidden");
       chatInput.placeholder = "Type your response...";
       if (headerSplitToggleBtn) headerSplitToggleBtn.style.display = "flex";
+      chatSidebar.style.width = `${getBalancedSplitWidth()}px`;
     }
     let currentViewMode = "split";
     let isResizing = false;
@@ -8862,11 +8868,12 @@ This will clear chat history for this concept node so you can re-learn it from s
     });
     panelResizer?.addEventListener("dblclick", (e) => {
       if (e.target.closest(".gutter-toggle-btn")) return;
-      chatSidebar.style.width = "420px";
+      chatSidebar.style.width = `${getBalancedSplitWidth()}px`;
       if (currentViewMode === "canvas-only") {
         setWorkspaceViewMode("split");
       }
     });
+    let dragStartLeftOffset = 0;
     panelResizer?.addEventListener("pointerdown", (e) => {
       if (e.target.closest(".gutter-toggle-btn")) return;
       isResizing = true;
@@ -8874,6 +8881,8 @@ This will clear chat history for this concept node so you can re-learn it from s
         panelResizer.setPointerCapture(e.pointerId);
       } catch (_) {
       }
+      const sidebarRect = chatSidebar.getBoundingClientRect();
+      dragStartLeftOffset = sidebarRect.left;
       panelResizer.classList.add("resizing");
       chatSidebar.classList.add("resizing");
       document.body.style.cursor = "col-resize";
@@ -8881,16 +8890,19 @@ This will clear chat history for this concept node so you can re-learn it from s
     });
     panelResizer?.addEventListener("pointermove", (e) => {
       if (!isResizing) return;
+      const mouseWidth = e.clientX - dragStartLeftOffset;
       const snapThreshold = 180;
-      const maxWidth = Math.min(window.innerWidth - 300, window.innerWidth * 0.75);
-      if (e.clientX < snapThreshold) {
+      const minWidth = 280;
+      const availableWidth = window.innerWidth - dragStartLeftOffset;
+      const maxWidth = Math.min(availableWidth - 300, availableWidth * 0.75);
+      if (mouseWidth < snapThreshold) {
         setWorkspaceViewMode("canvas-only");
       } else {
         if (currentViewMode === "canvas-only") {
           setWorkspaceViewMode("split");
         }
-        const newWidth = Math.min(e.clientX, maxWidth);
-        chatSidebar.style.width = `${newWidth}px`;
+        const clampedWidth = Math.max(minWidth, Math.min(mouseWidth, maxWidth));
+        chatSidebar.style.width = `${clampedWidth}px`;
       }
     });
     const stopPointerResizing = (e) => {

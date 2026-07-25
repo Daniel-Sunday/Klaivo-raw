@@ -627,6 +627,17 @@ export async function saveSessionArtifact(
   structuredMetadata: any
 ): Promise<void> {
   const metaJson = JSON.stringify(structuredMetadata || {});
+  if (supabase) {
+    try {
+      await supabase.from('session_artifacts').upsert({
+        id,
+        session_id: sessionId,
+        filename,
+        content,
+        structured_metadata: metaJson,
+      });
+    } catch (_) {}
+  }
   sqliteDb
     .prepare(
       'INSERT OR REPLACE INTO session_artifacts (id, session_id, filename, content, structured_metadata) VALUES (?, ?, ?, ?, ?)'
@@ -635,6 +646,20 @@ export async function saveSessionArtifact(
 }
 
 export async function getSessionArtifacts(sessionId: string): Promise<any[]> {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('session_artifacts')
+        .select('*')
+        .eq('session_id', sessionId);
+      if (!error && data && data.length > 0) {
+        return data.map((r: any) => ({
+          ...r,
+          structured_metadata: typeof r.structured_metadata === 'string' ? JSON.parse(r.structured_metadata) : r.structured_metadata || {},
+        }));
+      }
+    } catch (_) {}
+  }
   const rows = sqliteDb.prepare('SELECT * FROM session_artifacts WHERE session_id = ?').all(sessionId);
   return rows.map((r: any) => ({
     ...r,
@@ -649,14 +674,37 @@ export async function saveVectorEmbedding(
   chunkText: string,
   embedding: number[] = []
 ): Promise<void> {
+  const embedJson = JSON.stringify(embedding || []);
+  if (supabase) {
+    try {
+      await supabase.from('vector_embeddings').insert({
+        session_id: sessionId,
+        artifact_id: artifactId,
+        chunk_index: chunkIndex,
+        chunk_text: chunkText,
+        embedding: embedJson,
+      });
+    } catch (_) {}
+  }
   sqliteDb
     .prepare(
       'INSERT INTO vector_embeddings (session_id, artifact_id, chunk_index, chunk_text, embedding) VALUES (?, ?, ?, ?, ?)'
     )
-    .run(sessionId, artifactId, chunkIndex, chunkText, JSON.stringify(embedding));
+    .run(sessionId, artifactId, chunkIndex, chunkText, embedJson);
 }
 
 export async function getVectorEmbeddings(sessionId: string): Promise<any[]> {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('vector_embeddings')
+        .select('*')
+        .eq('session_id', sessionId);
+      if (!error && data && data.length > 0) {
+        return data;
+      }
+    } catch (_) {}
+  }
   return sqliteDb.prepare('SELECT * FROM vector_embeddings WHERE session_id = ?').all(sessionId);
 }
 
@@ -670,14 +718,46 @@ export async function saveTaskSimulation(
   starterCode?: string,
   solutionRubric?: string
 ): Promise<void> {
+  const specJson = JSON.stringify(promptSpec || {});
+  if (supabase) {
+    try {
+      await supabase.from('task_simulations').upsert({
+        id,
+        session_id: sessionId,
+        node_id: nodeId,
+        task_type: taskType,
+        prompt_spec: specJson,
+        starter_code: starterCode || '',
+        solution_rubric: solutionRubric || '',
+      });
+    } catch (_) {}
+  }
   sqliteDb
     .prepare(
       'INSERT OR REPLACE INTO task_simulations (id, session_id, node_id, task_type, prompt_spec, starter_code, solution_rubric) VALUES (?, ?, ?, ?, ?, ?, ?)'
     )
-    .run(id, sessionId, nodeId, taskType, JSON.stringify(promptSpec), starterCode || '', solutionRubric || '');
+    .run(id, sessionId, nodeId, taskType, specJson, starterCode || '', solutionRubric || '');
 }
 
 export async function getTaskSimulation(sessionId: string, nodeId: string): Promise<any | null> {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('task_simulations')
+        .select('*')
+        .eq('session_id', sessionId)
+        .eq('node_id', nodeId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!error && data) {
+        return {
+          ...data,
+          prompt_spec: typeof data.prompt_spec === 'string' ? JSON.parse(data.prompt_spec) : data.prompt_spec,
+        };
+      }
+    } catch (_) {}
+  }
   const row = sqliteDb
     .prepare('SELECT * FROM task_simulations WHERE session_id = ? AND node_id = ? ORDER BY created_at DESC LIMIT 1')
     .get(sessionId, nodeId);
@@ -696,14 +776,46 @@ export async function saveEvidenceScore(
   advisoryBadge: string
 ): Promise<void> {
   const id = `ev_${sessionId}_${nodeId}`;
+  const signalsJson = JSON.stringify(signals || {});
+  if (supabase) {
+    try {
+      await supabase.from('evidence_scores').upsert({
+        id,
+        session_id: sessionId,
+        node_id: nodeId,
+        mastery_probability: masteryProbability,
+        signals: signalsJson,
+        advisory_badge: advisoryBadge,
+      });
+    } catch (_) {}
+  }
   sqliteDb
     .prepare(
       'INSERT OR REPLACE INTO evidence_scores (id, session_id, node_id, mastery_probability, signals, advisory_badge) VALUES (?, ?, ?, ?, ?, ?)'
     )
-    .run(id, sessionId, nodeId, masteryProbability, JSON.stringify(signals), advisoryBadge);
+    .run(id, sessionId, nodeId, masteryProbability, signalsJson, advisoryBadge);
 }
 
 export async function getEvidenceScores(sessionId: string): Promise<Record<string, any>> {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('evidence_scores')
+        .select('*')
+        .eq('session_id', sessionId);
+      if (!error && data && data.length > 0) {
+        const res: Record<string, any> = {};
+        for (const r of data) {
+          res[r.node_id] = {
+            masteryProbability: r.mastery_probability,
+            signals: typeof r.signals === 'string' ? JSON.parse(r.signals) : r.signals,
+            advisoryBadge: r.advisory_badge,
+          };
+        }
+        return res;
+      }
+    } catch (_) {}
+  }
   const rows = sqliteDb.prepare('SELECT * FROM evidence_scores WHERE session_id = ?').all(sessionId);
   const result: Record<string, any> = {};
   for (const r of rows) {

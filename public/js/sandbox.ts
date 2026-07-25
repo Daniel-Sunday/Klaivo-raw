@@ -40,19 +40,19 @@ export class TaskSandbox {
   private getModalityMeta(modality: TaskModality): { badge: string; label: string } {
     switch (modality) {
       case 'code_challenge':
-        return { badge: '💻 Code Simulation', label: 'Solution Code' };
+        return { badge: '💻 CODE SIMULATION', label: 'Solution Code' };
       case 'exam_rubric_challenge':
-        return { badge: '📝 Exam Rubric Challenge', label: 'Written Response' };
+        return { badge: '📄 EXAM RUBRIC CHALLENGE', label: 'Written Response' };
       case 'scenario_simulation':
-        return { badge: '💼 Strategic Case Scenario', label: 'Scenario Analysis & Decision' };
+        return { badge: '💼 STRATEGIC CASE SCENARIO', label: 'Scenario Analysis & Decision' };
       case 'creative_synthesis_challenge':
-        return { badge: '🎨 Creative & Structural Synthesis', label: 'Synthesis Response' };
+        return { badge: '🎨 CREATIVE SYNTHESIS', label: 'Synthesis Response' };
       case 'dialogue_simulation':
-        return { badge: '💬 Interactive Dialogue Simulation', label: 'Dialogue / Translation' };
+        return { badge: '💬 DIALOGUE SIMULATION', label: 'Dialogue / Translation' };
       case 'math_proof_challenge':
-        return { badge: '📐 Quantitative Proof Challenge', label: 'Step-by-Step Proof' };
+        return { badge: '📐 QUANTITATIVE PROOF CHALLENGE', label: 'Step-by-Step Proof' };
       default:
-        return { badge: '🎯 Domain Task Challenge', label: 'Task Response' };
+        return { badge: '🎯 DOMAIN TASK CHALLENGE', label: 'Task Response' };
     }
   }
 

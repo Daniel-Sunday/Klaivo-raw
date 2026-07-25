@@ -513,12 +513,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (headerSplitToggleBtn) headerSplitToggleBtn.style.display = 'flex';
   }
 
+  /** Helper to compute balanced ~45% split width per UI Constitution */
+  function getBalancedSplitWidth(): number {
+    const navLeft = appLeftNav ? appLeftNav.getBoundingClientRect().width : 0;
+    const availableWidth = window.innerWidth - navLeft;
+    return Math.max(360, Math.min(Math.round(availableWidth * 0.45), 750));
+  }
+
   /** Stage 2 → Stage 3: expand chat+canvas split view */
   function activateSplitScreen(): void {
     workspaceScreen.classList.remove('discovery-mode');
     if (toggleSidebarBtn) toggleSidebarBtn.classList.remove('hidden');
     chatInput.placeholder = 'Type your response...';
     if (headerSplitToggleBtn) headerSplitToggleBtn.style.display = 'flex';
+    chatSidebar.style.width = `${getBalancedSplitWidth()}px`;
   }
 
   type WorkspaceViewMode = 'split' | 'canvas-only' | 'chat-only';
@@ -571,22 +579,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Double-click resizer to reset width to default 420px
+  // Double-click resizer to reset width to balanced ~45% split ratio
   panelResizer?.addEventListener('dblclick', (e: MouseEvent) => {
     if ((e.target as HTMLElement).closest('.gutter-toggle-btn')) return;
-    chatSidebar.style.width = '420px';
+    chatSidebar.style.width = `${getBalancedSplitWidth()}px`;
     if (currentViewMode === 'canvas-only') {
       setWorkspaceViewMode('split');
     }
   });
 
   // Pointer Capture Dragging (Eliminates mouse drops & slippery drag lag)
+  let dragStartLeftOffset = 0;
+
   panelResizer?.addEventListener('pointerdown', (e: PointerEvent) => {
     if ((e.target as HTMLElement).closest('.gutter-toggle-btn')) return;
     isResizing = true;
     try {
       panelResizer.setPointerCapture(e.pointerId);
     } catch (_) {}
+
+    // Measure left boundary offset of chatSidebar (accounts for left navigation rail)
+    const sidebarRect = chatSidebar.getBoundingClientRect();
+    dragStartLeftOffset = sidebarRect.left;
+
     panelResizer.classList.add('resizing');
     chatSidebar.classList.add('resizing');
     document.body.style.cursor = 'col-resize';
@@ -595,18 +610,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   panelResizer?.addEventListener('pointermove', (e: PointerEvent) => {
     if (!isResizing) return;
+    const mouseWidth = e.clientX - dragStartLeftOffset;
     const snapThreshold = 180;
-    const maxWidth = Math.min(window.innerWidth - 300, window.innerWidth * 0.75);
+    const minWidth = 280;
+    const availableWidth = window.innerWidth - dragStartLeftOffset;
+    const maxWidth = Math.min(availableWidth - 300, availableWidth * 0.75);
 
-    if (e.clientX < snapThreshold) {
+    if (mouseWidth < snapThreshold) {
       // Snap to collapsed when dragged under snap threshold
       setWorkspaceViewMode('canvas-only');
     } else {
       if (currentViewMode === 'canvas-only') {
         setWorkspaceViewMode('split');
       }
-      const newWidth = Math.min(e.clientX, maxWidth);
-      chatSidebar.style.width = `${newWidth}px`;
+      const clampedWidth = Math.max(minWidth, Math.min(mouseWidth, maxWidth));
+      chatSidebar.style.width = `${clampedWidth}px`;
     }
   });
 
