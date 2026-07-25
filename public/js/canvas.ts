@@ -15,12 +15,19 @@ export class ConceptCanvas {
   
   private nodes: CurriculumNode[] = [];
   private onNodeClickCallback: ((node: CurriculumNode) => void) | null = null;
+  private thinkingHudEl: HTMLElement | null = null;
+  private thinkingAgentEl: HTMLElement | null = null;
+  private thinkingStreamEl: HTMLElement | null = null;
   
   constructor(svgId: string) {
     this.svg = document.getElementById(svgId) as unknown as SVGSVGElement;
     this.viewport = document.getElementById('canvas-viewport') as unknown as SVGGElement;
     this.edgesGroup = document.getElementById('svg-edges') as unknown as SVGGElement;
     this.nodesGroup = document.getElementById('svg-nodes') as unknown as SVGGElement;
+
+    this.thinkingHudEl = document.getElementById('canvas-thinking-hud');
+    this.thinkingAgentEl = document.getElementById('thinking-agent-name');
+    this.thinkingStreamEl = document.getElementById('thinking-stream-text');
     
     this.initDefs();
     this.initEvents();
@@ -28,6 +35,7 @@ export class ConceptCanvas {
 
   /** Initialize SVG Defs (Patterns, Gradients, Filters) */
   private initDefs(): void {
+    if (!this.svg) return;
     let defs = this.svg.querySelector('defs');
     if (!defs) {
       defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
@@ -55,11 +63,17 @@ export class ConceptCanvas {
       bgRect.setAttribute('width', '100%');
       bgRect.setAttribute('height', '100%');
       bgRect.setAttribute('fill', 'url(#canvas-grid-pattern)');
-      this.svg.insertBefore(bgRect, this.viewport);
+      if (this.viewport) {
+        this.svg.insertBefore(bgRect, this.viewport);
+      } else {
+        this.svg.appendChild(bgRect);
+      }
     }
   }
 
   private initEvents(): void {
+    if (!this.svg) return;
+
     // Panning events
     this.svg.addEventListener('mousedown', (e: MouseEvent) => {
       if ((e.target as Element).closest('.svg-node-group')) return;
@@ -112,6 +126,7 @@ export class ConceptCanvas {
   }
 
   private zoomStep(factor: number): void {
+    if (!this.svg) return;
     const width = this.svg.clientWidth || 800;
     const height = this.svg.clientHeight || 600;
     
@@ -137,7 +152,7 @@ export class ConceptCanvas {
   }
 
   private autoCenterTree(nodes: CurriculumNode[]): void {
-    if (!nodes || nodes.length === 0) return;
+    if (!nodes || nodes.length === 0 || !this.svg) return;
 
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
@@ -171,19 +186,103 @@ export class ConceptCanvas {
   }
 
   private applyTransform(): void {
-    this.viewport.setAttribute('transform', `translate(${this.panX}, ${this.panY}) scale(${this.zoom})`);
+    if (this.viewport) {
+      this.viewport.setAttribute('transform', `translate(${this.panX}, ${this.panY}) scale(${this.zoom})`);
+    }
+  }
+
+  // ── Ghostly Thinking Stream HUD Public API ──
+
+  public showThinking(agentName: string, thoughtText: string): void {
+    if (!this.thinkingHudEl) this.thinkingHudEl = document.getElementById('canvas-thinking-hud');
+    if (!this.thinkingAgentEl) this.thinkingAgentEl = document.getElementById('thinking-agent-name');
+    if (!this.thinkingStreamEl) this.thinkingStreamEl = document.getElementById('thinking-stream-text');
+
+    if (this.thinkingAgentEl) this.thinkingAgentEl.textContent = agentName;
+    if (this.thinkingStreamEl) {
+      this.thinkingStreamEl.textContent = thoughtText;
+      this.thinkingStreamEl.classList.remove('error-text');
+    }
+
+    const dot = this.thinkingHudEl?.querySelector('.thinking-hud-dot');
+    if (dot) {
+      dot.className = 'thinking-hud-dot';
+    }
+
+    if (this.thinkingHudEl) {
+      this.thinkingHudEl.classList.remove('hidden');
+    }
+  }
+
+  public showThinkingError(agentName: string, errorMessage: string): void {
+    if (!this.thinkingHudEl) this.thinkingHudEl = document.getElementById('canvas-thinking-hud');
+    if (!this.thinkingAgentEl) this.thinkingAgentEl = document.getElementById('thinking-agent-name');
+    if (!this.thinkingStreamEl) this.thinkingStreamEl = document.getElementById('thinking-stream-text');
+
+    if (this.thinkingAgentEl) this.thinkingAgentEl.textContent = agentName;
+    if (this.thinkingStreamEl) {
+      this.thinkingStreamEl.textContent = errorMessage;
+      this.thinkingStreamEl.classList.add('error-text');
+    }
+
+    const dot = this.thinkingHudEl?.querySelector('.thinking-hud-dot');
+    if (dot) {
+      dot.className = 'thinking-hud-dot error';
+    }
+
+    if (this.thinkingHudEl) {
+      this.thinkingHudEl.classList.remove('hidden');
+    }
+  }
+
+  public hideThinking(finalStatus?: string): void {
+    if (!this.thinkingHudEl) this.thinkingHudEl = document.getElementById('canvas-thinking-hud');
+    if (!this.thinkingStreamEl) this.thinkingStreamEl = document.getElementById('thinking-stream-text');
+
+    if (finalStatus && this.thinkingStreamEl) {
+      this.thinkingStreamEl.textContent = finalStatus;
+      this.thinkingStreamEl.classList.remove('error-text');
+      const dot = this.thinkingHudEl?.querySelector('.thinking-hud-dot');
+      if (dot) dot.className = 'thinking-hud-dot verified';
+
+      setTimeout(() => {
+        if (this.thinkingHudEl) this.thinkingHudEl.classList.add('hidden');
+      }, 2400);
+    } else if (this.thinkingHudEl) {
+      this.thinkingHudEl.classList.add('hidden');
+    }
   }
 
   public onNodeClick(callback: (node: CurriculumNode) => void): void {
     this.onNodeClickCallback = callback;
   }
 
-  public render(nodes: CurriculumNode[]): void {
+  public render(nodes: CurriculumNode[], animate: boolean = true): void {
+    const oldNodes = this.nodes;
     this.nodes = nodes;
+    
+    if (!nodes || nodes.length === 0) {
+      this.nodesGroup.innerHTML = '';
+      this.edgesGroup.innerHTML = '';
+      return;
+    }
+
+    // Identify removed nodes to trigger dissolve animation before DOM removal
+    const newIdSet = new Set(nodes.map(n => n.id));
+    oldNodes.forEach(oldNode => {
+      if (!newIdSet.has(oldNode.id)) {
+        const oldGroup = document.getElementById(`node-group-${oldNode.id}`);
+        if (oldGroup) {
+          oldGroup.classList.add('dissolving');
+          setTimeout(() => {
+            if (oldGroup.parentNode) oldGroup.parentNode.removeChild(oldGroup);
+          }, 350);
+        }
+      }
+    });
+
     this.nodesGroup.innerHTML = '';
     this.edgesGroup.innerHTML = '';
-    
-    if (!nodes || nodes.length === 0) return;
 
     // 1. Draw Paths / Edges
     const nodeMap: Record<string, CurriculumNode> = {};
@@ -194,7 +293,7 @@ export class ConceptCanvas {
         node.dependencies.forEach(depId => {
           const parentNode = nodeMap[depId];
           if (parentNode) {
-            this.drawConnection(parentNode, node);
+            this.drawConnection(parentNode, node, animate);
           }
         });
       }
@@ -202,14 +301,14 @@ export class ConceptCanvas {
 
     // 2. Draw Nodes
     nodes.forEach(node => {
-      this.drawNode(node);
+      this.drawNode(node, animate);
     });
 
     // 3. Auto center view
     this.autoCenterTree(nodes);
   }
 
-  private drawConnection(parent: CurriculumNode, child: CurriculumNode): void {
+  private drawConnection(parent: CurriculumNode, child: CurriculumNode, animate: boolean = true): void {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     
     // Connect from right edge of parent to left edge of child
@@ -233,11 +332,27 @@ export class ConceptCanvas {
     }
     
     this.edgesGroup.appendChild(path);
+
+    if (animate) {
+      const length = Math.ceil(path.getTotalLength ? (path.getTotalLength() || 300) : 300);
+      path.style.setProperty('--path-len', `${length}`);
+      path.classList.add('animated');
+      const edgeDelay = Math.max(0, (child.order_index - 0.5) * 180);
+      path.style.animationDelay = `${edgeDelay}ms`;
+    }
   }
 
-  private drawNode(node: CurriculumNode): void {
+  private drawNode(node: CurriculumNode, animate: boolean = true): void {
     const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     group.setAttribute('class', `svg-node-group ${node.status}`);
+    group.setAttribute('id', `node-group-${node.id}`);
+    group.style.transformOrigin = `${node.x + 105}px ${node.y + 43}px`;
+
+    if (animate) {
+      group.classList.add('animated');
+      const nodeDelay = Math.max(0, node.order_index * 180);
+      group.style.animationDelay = `${nodeDelay}ms`;
+    }
     group.setAttribute('id', `node-group-${node.id}`);
     
     const width = 210;

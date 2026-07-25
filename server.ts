@@ -226,7 +226,79 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
     console.log(`   Session: ${sessionId}`);
     console.log(`${'═'.repeat(60)}`);
 
-    // Execute Phase 3 Orchestrator Intake Pipeline
+    // Execute Phase 3 Orchestrator Intake Pipeline with optional SSE streaming
+    const isStream = req.headers.accept?.includes('text/event-stream') || req.query.stream === 'true';
+
+    if (isStream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      const sendSSE = (event: string, data: any) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+
+      const intakeResult = await orchestrator.handleIntakeWorkflow(
+        initial_prompt,
+        initialLearnerState,
+        contextArtifacts,
+        undefined,
+        undefined,
+        (progress) => {
+          if (progress.payload?.skeleton) {
+            const formatted = mapTreeSkeletonToCurriculumNodes(sessionId, progress.payload.skeleton);
+            sendSSE('agent_progress', { ...progress, payload: { ...progress.payload, nodes: formatted } });
+          } else {
+            sendSSE('agent_progress', progress);
+          }
+        }
+      );
+
+      const targetSubj = intakeResult.slotState?.slotsResolved?.targetSubject;
+      const goalSum = intakeResult.status === 'tree_created' ? intakeResult.tree.goalSummary : undefined;
+      const sessionTitle = generateSessionTitle(initial_prompt, targetSubj, goalSum);
+      const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
+
+      if (intakeResult.status === 'tree_created') {
+        const skeleton = intakeResult.tree;
+        const formattedNodes = mapTreeSkeletonToCurriculumNodes(sessionId, skeleton);
+        await db.createSession(sessionId, sessionTitle, skeleton.goalSummary, 'learning', calibration);
+        if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
+        await db.saveNodes(sessionId, formattedNodes);
+        await db.createMessage(sessionId, null, 'user', initial_prompt);
+
+        const introMsg = `Curriculum verified for objective: "${skeleton.goalSummary}". Select any available node on the canvas to begin learning.`;
+        await db.createMessage(sessionId, null, 'assistant', introMsg);
+
+        sendSSE('pipeline_complete', {
+          sessionId,
+          title: sessionTitle,
+          intent: skeleton.goalSummary,
+          calibration,
+          diagnosticQuestion: introMsg,
+          status: 'learning',
+          nodes: formattedNodes,
+        });
+      } else {
+        const q = (intakeResult as any).question || (intakeResult as any).response || 'Please provide more details on your learning objective.';
+        await db.createSession(sessionId, sessionTitle, 'learning', 'diagnosing', calibration);
+        if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
+        await db.createMessage(sessionId, null, 'user', initial_prompt);
+        await db.createMessage(sessionId, null, 'assistant', q);
+
+        sendSSE('pipeline_complete', {
+          sessionId,
+          title: sessionTitle,
+          intent: 'learning',
+          calibration,
+          diagnosticQuestion: q,
+          status: 'diagnosing',
+        });
+      }
+      return res.end();
+    }
+
+    // Standard JSON Fallback Request Path
     const intakeResult = await orchestrator.handleIntakeWorkflow(
       initial_prompt,
       initialLearnerState,
@@ -321,7 +393,7 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
 });
 
 /**
- * POST /api/sessions/:id/diagnose: Diagnose turn handler
+ * POST /api/sessions/:id/diagnose: Diagnose turn handler with optional SSE streaming
  */
 app.post('/api/sessions/:id/diagnose', async (req: Request, res: Response): Promise<any> => {
   try {
@@ -335,6 +407,68 @@ app.post('/api/sessions/:id/diagnose', async (req: Request, res: Response): Prom
 
     await db.createMessage(sessionId, null, 'user', text);
     const learnerState = await buildLearnerState(sessionId, session);
+
+    const isStream = req.headers.accept?.includes('text/event-stream') || req.query.stream === 'true';
+
+    if (isStream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      const sendSSE = (event: string, data: any) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+
+      const intakeResult = await orchestrator.handleIntakeWorkflow(
+        text,
+        learnerState,
+        [],
+        session.slot_state,
+        undefined,
+        (progress) => {
+          if (progress.payload?.skeleton) {
+            const formatted = mapTreeSkeletonToCurriculumNodes(sessionId, progress.payload.skeleton);
+            sendSSE('agent_progress', { ...progress, payload: { ...progress.payload, nodes: formatted } });
+          } else {
+            sendSSE('agent_progress', progress);
+          }
+        }
+      );
+
+      if (intakeResult.slotState) {
+        await db.updateSessionSlotState(sessionId, intakeResult.slotState);
+      }
+
+      const diagSubj = intakeResult.slotState?.slotsResolved?.targetSubject;
+      const diagGoal = intakeResult.status === 'tree_created' ? intakeResult.tree.goalSummary : undefined;
+      const updatedTitle = generateSessionTitle(session.title || text, diagSubj, diagGoal);
+      await db.updateSessionTitle(sessionId, updatedTitle);
+
+      if (intakeResult.status === 'tree_created') {
+        const formattedNodes = mapTreeSkeletonToCurriculumNodes(sessionId, intakeResult.tree);
+        await db.saveNodes(sessionId, formattedNodes);
+        await db.updateSessionStatus(sessionId, 'learning');
+
+        const finalMsg = `Curriculum tree drafted and verified for: "${intakeResult.tree.goalSummary}". Select any available concept node to start learning!`;
+        await db.createMessage(sessionId, null, 'assistant', finalMsg);
+
+        sendSSE('pipeline_complete', {
+          status: 'learning',
+          title: updatedTitle,
+          response: finalMsg,
+          nodes: formattedNodes,
+        });
+      } else {
+        const q = (intakeResult as any).question || (intakeResult as any).response || 'Could you provide a bit more detail on your specific learning objective?';
+        await db.createMessage(sessionId, null, 'assistant', q);
+        sendSSE('pipeline_complete', {
+          status: 'diagnosing',
+          title: updatedTitle,
+          response: q,
+        });
+      }
+      return res.end();
+    }
 
     const intakeResult = await orchestrator.handleIntakeWorkflow(text, learnerState, [], session.slot_state);
 
@@ -444,6 +578,21 @@ app.post('/api/sessions/:id/nodes/:nodeId/star', async (req: Request, res: Respo
     return res.json({ success: true });
   } catch (error: any) {
     console.error('[server] Error starring node:', error);
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
+  }
+});
+
+/**
+ * POST /api/sessions/:id/nodes/:nodeId/open: Mark node as opened / in_progress
+ */
+app.post('/api/sessions/:id/nodes/:nodeId/open', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const sessionId = req.params.id as string;
+    const nodeId = req.params.nodeId as string;
+    await db.updateNodeStatus(sessionId, nodeId, 'in_progress');
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error('[server] Error opening node:', error);
     return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });

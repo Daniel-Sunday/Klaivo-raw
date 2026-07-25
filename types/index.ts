@@ -29,8 +29,9 @@ export interface CurriculumNode {
   x: number;
   y: number;
   dependencies: string[];
-  status: 'locked' | 'available' | 'completed' | 'active';
+  status: 'locked' | 'available' | 'completed' | 'active' | 'in_progress';
   order_index: number;
+  is_starred?: boolean;
   created_at?: string;
 }
 

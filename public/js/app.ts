@@ -484,7 +484,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (exitNodeBtn) exitNodeBtn.style.display = 'none';
         chatHistory.innerHTML = '';
-        loadGlobalChat();
+        if (data.messages && Array.isArray(data.messages)) {
+          data.messages.forEach((msg: any) => {
+            appendMessage(msg.sender === 'user' ? 'user' : 'assistant', msg.content);
+          });
+        }
       }
 
     } catch (err) {
@@ -740,9 +744,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // Suggestion chips
   suggestionChips.forEach(chip => {
     chip.addEventListener('click', () => {
-      const prompt = chip.dataset.prompt || chip.textContent?.trim() || '';
-      welcomeInput.value = prompt;
-      welcomeInput.focus();
+      const prompt = chip.dataset.prompt || chip.getAttribute('data-prompt') || chip.textContent?.trim() || '';
+      if (prompt) {
+        welcomeInput.value = prompt;
+        welcomeInput.style.height = 'auto';
+        welcomeInput.style.height = `${Math.min(welcomeInput.scrollHeight, 160)}px`;
+        startSession();
+      }
     });
   });
 
@@ -754,16 +762,87 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // Active Stream Cleanup Guard
+  let activeStreamReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+  async function readSseStream(
+    url: string,
+    options: RequestInit,
+    onEvent: (event: string, data: any) => void
+  ): Promise<void> {
+    if (activeStreamReader) {
+      try { activeStreamReader.cancel(); } catch (_) {}
+      activeStreamReader = null;
+    }
+
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        'Accept': 'text/event-stream',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Stream request failed with status ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Response body reader unavailable');
+    activeStreamReader = reader;
+
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split('\n\n');
+        buffer = blocks.pop() || '';
+
+        for (const block of blocks) {
+          if (!block.trim()) continue;
+          let eventName = 'message';
+          let eventData = '';
+
+          const lines = block.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              eventName = line.substring(6).trim();
+            } else if (line.startsWith('data:')) {
+              eventData += line.substring(5).trim();
+            }
+          }
+
+          if (eventData) {
+            try {
+              const parsed = JSON.parse(eventData);
+              onEvent(eventName, parsed);
+            } catch (_) {}
+          }
+        }
+      }
+    } finally {
+      if (activeStreamReader === reader) {
+        activeStreamReader = null;
+      }
+    }
+  }
+
   welcomeSendBtn.addEventListener('click', startSession);
 
   async function startSession(): Promise<void> {
     const prompt = welcomeInput.value.trim();
     if (!prompt) { welcomeInput.focus(); return; }
 
-    // Move to discovery mode chat first (immediate UI response)
+    // Move to discovery mode & open split screen immediately
     enterDiscoveryMode();
+    activateSplitScreen();
+    canvas.showThinking('IntentAgent', 'Initializing intake & intent classification...');
 
-    // Show the user's message and a thinking dot loader
     appendMessage('user', prompt);
     const thinkingWrapper = appendMessage('assistant', '<div class="thinking-dots"><span></span><span></span><span></span></div>');
 
@@ -772,33 +851,52 @@ document.addEventListener('DOMContentLoaded', () => {
       formData.append('initial_prompt', prompt);
       selectedFiles.forEach(file => formData.append('documents', file));
 
-      const response = await fetch('/api/sessions/start', { method: 'POST', body: formData });
-      if (!response.ok) throw new Error('Failed to start session');
+      let finalData: any = null;
 
-      const data = await response.json();
-      sessionId     = data.sessionId;
-      calibration   = data.calibration.level;
+      await readSseStream('/api/sessions/start?stream=true', {
+        method: 'POST',
+        body: formData,
+      }, (event, data) => {
+        if (event === 'agent_progress') {
+          if (data.status === 'error') {
+            canvas.showThinkingError(data.agent, data.thought || 'Stage delayed — retrying...');
+          } else {
+            canvas.showThinking(data.agent, data.thought || 'Processing stage...');
+          }
+
+          if (data.payload?.nodes) {
+            nodes = data.payload.nodes;
+            canvas.render(nodes, true);
+            updateStats();
+          }
+        } else if (event === 'pipeline_complete') {
+          finalData = data;
+        }
+      });
+
+      if (!finalData) throw new Error('Session creation stream ended unexpectedly.');
+
+      sessionId     = finalData.sessionId;
+      calibration   = finalData.calibration?.level || 'intermediate';
 
       thinkingWrapper.remove();
 
-      // Update header
       if (headerCalibration) headerCalibration.textContent = calibration;
       if (headerStatus) headerStatus.classList.remove('hidden');
       if (canvasSessionTitle) canvasSessionTitle.textContent = prompt;
 
-      // Show AI's first diagnostic question
-      appendMessage('assistant', data.diagnosticQuestion);
+      appendMessage('assistant', finalData.diagnosticQuestion);
 
-      // If tree already built (instant path), jump straight to split-screen
-      if (data.nodes && data.nodes.length > 0) {
-        nodes = data.nodes;
-        canvas.render(nodes);
+      if (finalData.nodes && finalData.nodes.length > 0) {
+        nodes = finalData.nodes;
+        canvas.render(nodes, true);
         updateStats();
-        activateSplitScreen();
+        canvas.hideThinking('✓ Curriculum Verified against Domain Rubrics');
         appendMessage('assistant', "🎉 Your personalized learning tree has been built! Click on the first unlocked node on the right to start learning.");
+      } else {
+        canvas.hideThinking();
       }
 
-      // Reset
       selectedFiles = [];
       welcomeFilesList.innerHTML = '';
       loadNavigationHistory();
@@ -806,6 +904,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err: any) {
       console.error(err);
       thinkingWrapper.remove();
+      canvas.showThinkingError('Orchestrator', `Session intake error: ${err.message}`);
       appendMessage('assistant', `Something went wrong starting your session: ${err.message}`);
     }
   }
@@ -844,10 +943,14 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById(`node-group-${node.id}`)?.classList.add('active');
 
     activeNodeId = node.id;
+    node.status = 'in_progress';
+    fetch(`/api/sessions/${sessionId}/nodes/${node.id}/open`, { method: 'POST' }).catch(() => {});
+    loadNavigationHistory();
+
     if (sidebarNodeTitle) sidebarNodeTitle.textContent = node.title;
     if (sidebarNodeStatus) {
-      sidebarNodeStatus.textContent = node.status.toUpperCase();
-      sidebarNodeStatus.className = `node-badge ${node.status}`;
+      sidebarNodeStatus.textContent = 'IN_PROGRESS';
+      sidebarNodeStatus.className = `node-badge in_progress`;
     }
     if (exitNodeBtn) exitNodeBtn.style.display = 'block';
 
@@ -1041,34 +1144,58 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
       } else {
-        // ── Diagnosis / discovery context ──
-        const response = await fetch(`/api/sessions/${sessionId}/diagnose`, {
+        // ── Diagnosis / discovery context with real SSE streaming ──
+        activateSplitScreen();
+        canvas.showThinking('DiagnosisAgent', 'Processing your response...');
+
+        let finalData: any = null;
+
+        await readSseStream(`/api/sessions/${sessionId}/diagnose?stream=true`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text })
+          body: JSON.stringify({ text }),
+        }, (event, data) => {
+          if (event === 'agent_progress') {
+            if (data.status === 'error') {
+              canvas.showThinkingError(data.agent, data.thought || 'Stage delayed — retrying...');
+            } else {
+              canvas.showThinking(data.agent, data.thought || 'Processing stage...');
+            }
+
+            if (data.payload?.nodes) {
+              nodes = data.payload.nodes;
+              canvas.render(nodes, true);
+              updateStats();
+            }
+          } else if (event === 'pipeline_complete') {
+            finalData = data;
+          }
         });
-        if (!response.ok) throw new Error('Diagnosis message failed');
 
-        const data = await response.json();
+        if (!finalData) throw new Error('Diagnosis stream ended unexpectedly.');
+
         thinkingWrapper.remove();
-        appendMessage('assistant', data.response);
+        appendMessage('assistant', finalData.response);
 
-        if (data.title) {
-          if (canvasSessionTitle) canvasSessionTitle.textContent = data.title;
+        if (finalData.title) {
+          if (canvasSessionTitle) canvasSessionTitle.textContent = finalData.title;
           loadNavigationHistory();
         }
 
-        if (data.status === 'learning' || (data.nodes && data.nodes.length > 0)) {
-          nodes = data.nodes;
-          canvas.render(nodes);
+        if (finalData.status === 'learning' || (finalData.nodes && finalData.nodes.length > 0)) {
+          nodes = finalData.nodes;
+          canvas.render(nodes, true);
           updateStats();
-          activateSplitScreen();
+          canvas.hideThinking('✓ Curriculum Verified against Domain Rubrics');
           appendMessage('assistant', "🎉 Your personalized learning tree has been built! Click on the first unlocked node on the right to start learning.");
+        } else {
+          canvas.hideThinking();
         }
       }
     } catch (err: any) {
       console.error(err);
       thinkingWrapper.remove();
+      canvas.showThinkingError('Orchestrator', `Turn error: ${err.message}`);
       appendMessage('assistant', `Sorry, something went wrong: ${err.message}`);
     }
   }

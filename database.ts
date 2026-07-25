@@ -251,22 +251,38 @@ export async function updateSessionSlotState(id: string, slotState: any): Promis
 }
 
 export async function getSessions(): Promise<Session[]> {
+  const sqliteRows = sqliteDb.prepare('SELECT * FROM sessions ORDER BY created_at DESC').all();
+  const sqliteSessions = sqliteRows.map((row: any) => ({
+    ...row,
+    calibration: typeof row.calibration === 'string' ? JSON.parse(row.calibration) : row.calibration,
+    slot_state: row.slot_state ? (typeof row.slot_state === 'string' ? JSON.parse(row.slot_state) : row.slot_state) : undefined,
+  }));
+
   if (supabase) {
     try {
       const { data, error } = await supabase.from('sessions').select('*').order('created_at', { ascending: false });
       if (!error && data && data.length > 0) {
-        return data.map((row: any) => ({
+        const supabaseSessions = data.map((row: any) => ({
           ...row,
           calibration: typeof row.calibration === 'string' ? JSON.parse(row.calibration) : row.calibration,
+          slot_state: row.slot_state ? (typeof row.slot_state === 'string' ? JSON.parse(row.slot_state) : row.slot_state) : undefined,
         }));
+
+        const sessionMap = new Map<string, Session>();
+        for (const s of sqliteSessions) {
+          sessionMap.set(s.id, s);
+        }
+        for (const s of supabaseSessions) {
+          sessionMap.set(s.id, s);
+        }
+        return Array.from(sessionMap.values()).sort((a, b) =>
+          new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+        );
       }
     } catch (_) {}
   }
-  const rows = sqliteDb.prepare('SELECT * FROM sessions ORDER BY created_at DESC').all();
-  return rows.map((row: any) => ({
-    ...row,
-    calibration: JSON.parse(row.calibration),
-  }));
+
+  return sqliteSessions;
 }
 
 export async function getAllSessionsWithNodes(): Promise<{ session: Session; nodes: CurriculumNode[] }[]> {
@@ -334,6 +350,14 @@ export async function createNodes(sessionIdOrNodes: any, nodesParam?: any): Prom
 }
 
 export async function getNodes(sessionId: string): Promise<CurriculumNode[]> {
+  const sqliteRows = sqliteDb
+    .prepare('SELECT * FROM nodes WHERE session_id = ? ORDER BY order_index ASC')
+    .all(sessionId);
+  const sqliteNodes = sqliteRows.map((row: any) => ({
+    ...row,
+    dependencies: typeof row.dependencies === 'string' ? JSON.parse(row.dependencies) : row.dependencies,
+  }));
+
   if (supabase) {
     try {
       const { data, error } = await supabase
@@ -342,20 +366,22 @@ export async function getNodes(sessionId: string): Promise<CurriculumNode[]> {
         .eq('session_id', sessionId)
         .order('order_index', { ascending: true });
       if (!error && data && data.length > 0) {
-        return data.map((row: any) => ({
+        const supabaseNodes = data.map((row: any) => ({
           ...row,
           dependencies: typeof row.dependencies === 'string' ? JSON.parse(row.dependencies) : row.dependencies,
         }));
+        const nodeMap = new Map<string, CurriculumNode>();
+        for (const n of sqliteNodes) {
+          nodeMap.set(n.id, n);
+        }
+        for (const n of supabaseNodes) {
+          nodeMap.set(n.id, n);
+        }
+        return Array.from(nodeMap.values()).sort((a, b) => a.order_index - b.order_index);
       }
     } catch (_) {}
   }
-  const rows = sqliteDb
-    .prepare('SELECT * FROM nodes WHERE session_id = ? ORDER BY order_index ASC')
-    .all(sessionId);
-  return rows.map((row: any) => ({
-    ...row,
-    dependencies: JSON.parse(row.dependencies),
-  }));
+  return sqliteNodes;
 }
 
 export async function updateNodeStatus(sessionId: string, nodeId: string, status: string): Promise<void> {
@@ -379,6 +405,11 @@ export async function createMessage(
   sender: 'user' | 'assistant' | 'system',
   content: string
 ): Promise<Message> {
+  if (nodeId) {
+    try {
+      await updateNodeStatus(sessionId, nodeId, 'in_progress');
+    } catch (_) {}
+  }
   if (supabase) {
     try {
       await supabase.from('messages').insert({
@@ -403,6 +434,19 @@ export async function createMessage(
 }
 
 export async function getMessages(sessionId: string, nodeId?: string | null): Promise<Message[]> {
+  let sql = 'SELECT * FROM messages WHERE session_id = ?';
+  const params: any[] = [sessionId];
+  if (nodeId !== undefined) {
+    if (nodeId === null) {
+      sql += ' AND node_id IS NULL';
+    } else {
+      sql += ' AND node_id = ?';
+      params.push(nodeId);
+    }
+  }
+  sql += ' ORDER BY created_at ASC';
+  const sqliteMsgs = sqliteDb.prepare(sql).all(...params);
+
   if (supabase) {
     try {
       let query = supabase.from('messages').select('*').eq('session_id', sessionId);
@@ -415,22 +459,20 @@ export async function getMessages(sessionId: string, nodeId?: string | null): Pr
       }
       const { data, error } = await query.order('created_at', { ascending: true });
       if (!error && data && data.length > 0) {
-        return data;
+        const msgMap = new Map<string, Message>();
+        for (const m of sqliteMsgs) {
+          msgMap.set(`${m.sender}_${m.content}_${m.created_at}`, m);
+        }
+        for (const m of data) {
+          msgMap.set(`${m.sender}_${m.content}_${m.created_at}`, m);
+        }
+        return Array.from(msgMap.values()).sort(
+          (a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+        );
       }
     } catch (_) {}
   }
-  let sql = 'SELECT * FROM messages WHERE session_id = ?';
-  const params: any[] = [sessionId];
-  if (nodeId !== undefined) {
-    if (nodeId === null) {
-      sql += ' AND node_id IS NULL';
-    } else {
-      sql += ' AND node_id = ?';
-      params.push(nodeId);
-    }
-  }
-  sql += ' ORDER BY created_at ASC';
-  return sqliteDb.prepare(sql).all(...params);
+  return sqliteMsgs;
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {

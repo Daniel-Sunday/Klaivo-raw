@@ -2028,3 +2028,181 @@ header.app-header {
   font-style: italic;
 }
 
+/* ════════════════════════════════════════════════════════════════
+   Ghostly Translucent Agent Thinking HUD & SVG Canvas Animations
+   Anthropic-Grade Glassmorphic Architecture & Performance
+   ════════════════════════════════════════════════════════════════ */
+
+.canvas-thinking-hud {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  z-index: 50;
+  width: 320px;
+  max-width: calc(100% - 40px);
+  background: rgba(14, 16, 20, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  padding: 12px 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  font-family: var(--font-sans);
+  color: #e2e8f0;
+  pointer-events: none;
+  transform: translateZ(0);
+  will-change: transform, opacity;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.canvas-thinking-hud.hidden {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.96);
+  pointer-events: none;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .canvas-thinking-hud {
+    background: rgba(14, 16, 20, 0.96) !important;
+    backdrop-filter: none !important;
+  }
+}
+
+.thinking-hud-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.thinking-hud-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #60a5fa;
+  box-shadow: 0 0 10px #3b82f6;
+  animation: agentGlowPulse 1.8s infinite ease-in-out;
+}
+
+.thinking-hud-dot.verified {
+  background: #34d399;
+  box-shadow: 0 0 10px #10b981;
+  animation: none;
+}
+
+.thinking-hud-dot.error {
+  background: #fb7185;
+  box-shadow: 0 0 10px #f43f5e;
+  animation: none;
+}
+
+.thinking-hud-agent {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #93c5fd;
+}
+
+.thinking-hud-stream {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(241, 245, 249, 0.88);
+  transition: opacity 0.2s ease;
+}
+
+.thinking-hud-stream.error-text {
+  font-family: var(--font-sans);
+  color: #fca5a5;
+}
+
+/* --- SVG Progressive Canvas Animations --- */
+
+@keyframes svgPathDraw {
+  from {
+    stroke-dashoffset: var(--path-len, 300);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.svg-edge-path.animated {
+  stroke-dasharray: var(--path-len, 300);
+  stroke-dashoffset: var(--path-len, 300);
+  animation: svgPathDraw 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes svgNodePopIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  70% {
+    transform: scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.svg-node-group.animated {
+  opacity: 0;
+  animation: svgNodePopIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes svgNodeDissolve {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.85);
+    filter: grayscale(1) opacity(0.2);
+  }
+}
+
+.svg-node-group.dissolving {
+  animation: svgNodeDissolve 0.35s ease-out forwards !important;
+}
+
+@keyframes agentGlowPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 1;
+  }
+}
+
+/* --- Reduced Motion Accessibility Fallback --- */
+@media (prefers-reduced-motion: reduce) {
+  .svg-edge-path.animated {
+    stroke-dasharray: none !important;
+    stroke-dashoffset: 0 !important;
+    animation: none !important;
+  }
+
+  .svg-node-group.animated {
+    opacity: 1 !important;
+    transform: none !important;
+    animation: none !important;
+  }
+
+  .svg-node-group.dissolving {
+    opacity: 0 !important;
+    transform: none !important;
+    animation: none !important;
+  }
+
+  .thinking-hud-dot {
+    animation: none !important;
+  }
+}
+
+

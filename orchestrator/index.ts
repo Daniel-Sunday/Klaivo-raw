@@ -23,6 +23,13 @@ import { runRefinementAgent } from '../agents/refinementAgent';
 import { runReflectionAgent } from '../agents/reflectionAgent';
 import { createStarterSkeleton, sanitizeRefinementDiff, sanitizeUserErrorMessage } from '../utils/errorHandling';
 
+export interface AgentProgressEvent {
+  agent: 'IntentAgent' | 'DiagnosisAgent' | 'CurriculumDrafter' | 'CurriculumVerifier';
+  status: 'started' | 'thought' | 'done' | 'error';
+  thought?: string;
+  payload?: any;
+}
+
 export type IntakeWorkflowResult =
   | { status: 'needs_clarification'; question: string; intentOutput: IntentAgentOutput; slotState?: DiagnosisSlotState }
   | { status: 'light_response'; intent: string; response: string; slotState?: DiagnosisSlotState }
@@ -32,6 +39,45 @@ export type IntakeWorkflowResult =
 export type AssessmentWorkflowResult =
   | { status: 'assessment_success'; assessmentResult: AssessmentResult; updatedState: LearnerState; tree: TreeSkeleton }
   | { status: 'assessment_rejected'; message: string; currentState: LearnerState };
+
+async function runStageWithTimeoutAndRetry<T>(
+  stageName: string,
+  fn: () => Promise<T>,
+  timeoutMs: number = 15000,
+  onProgress?: (event: AgentProgressEvent) => void
+): Promise<T> {
+  const executeAttempt = () => {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`${stageName} timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+
+      fn()
+        .then((res) => {
+          clearTimeout(timer);
+          resolve(res);
+        })
+        .catch((err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+    });
+  };
+
+  try {
+    return await executeAttempt();
+  } catch (firstErr: any) {
+    console.warn(`[Orchestrator] ${stageName} failed on first attempt: ${firstErr?.message || firstErr}. Retrying once...`);
+    if (onProgress) {
+      onProgress({
+        agent: stageName as any,
+        status: 'error',
+        thought: `${stageName} delayed — retrying stage...`,
+      });
+    }
+    return await executeAttempt();
+  }
+}
 
 export class KlaivoOrchestrator {
   /**
@@ -55,7 +101,8 @@ export class KlaivoOrchestrator {
       intent?: Partial<IntentAgentOutput>;
       diagnosis?: Partial<DiagnosisAgentOutput>;
       skeleton?: Partial<TreeSkeleton>;
-    }
+    },
+    onProgress?: (event: AgentProgressEvent) => void
   ): Promise<IntakeWorkflowResult> {
     let slotState: DiagnosisSlotState | undefined = undefined;
     let mockOverrides = mockOverridesParam;
@@ -77,29 +124,31 @@ export class KlaivoOrchestrator {
     };
 
     // Step 1: Intent Agent
-    // Only classify intent on the FIRST turn of a session (no lockedIntent yet).
-    // Re-running this on every follow-up turn was the actual bug: a short answer
-    // fragment like "beginner level" or "for next year's exam" is genuinely
-    // ambiguous as a standalone intent classification, so it kept tripping the
-    // confidence gate and returning the same hardcoded clarification message —
-    // which looked like "stupid questions" and "no memory" to the user, even
-    // though the Diagnosis Agent underneath was tracking state correctly the
-    // whole time.
     let intent: string;
 
     if (currentSlotState.lockedIntent) {
       intent = currentSlotState.lockedIntent;
       console.log(`[Orchestrator] Using locked intent: ${intent} (skipping re-classification)`);
     } else {
-      const intentResult = await runIntentAgent(
-        { rawMessage: userMessage, learnerState },
-        mockOverrides?.intent
+      if (onProgress) {
+        onProgress({ agent: 'IntentAgent', status: 'started', thought: 'Classifying learning intent...' });
+      }
+
+      const intentResult = await runStageWithTimeoutAndRetry(
+        'IntentAgent',
+        () => runIntentAgent({ rawMessage: userMessage, learnerState }, mockOverrides?.intent),
+        15000,
+        onProgress
       );
 
       console.log(
         `[Orchestrator] Fresh intent classification: ${intentResult.output.intent} ` +
         `(confidence: ${intentResult.output.confidence})`
       );
+
+      if (onProgress) {
+        onProgress({ agent: 'IntentAgent', status: 'done', thought: `Intent classified: ${intentResult.output.intent}` });
+      }
 
       // Guardrail 1: Intent Confidence Gate (first turn only)
       if (intentResult.output.confidence < 0.6 || intentResult.output.needsClarification) {
@@ -134,17 +183,30 @@ export class KlaivoOrchestrator {
       : [userMessage];
 
     // Step 2: Diagnosis Agent with explicit Slot State Context & Full Conversation Memory
-    const diagnosisResult = await runDiagnosisAgent(
-      {
-        learnerId: learnerState.learnerId,
-        rawGoalStatement: userMessage,
-        conversationHistory,
-        currentSlotState,
-        contextArtifacts,
-        intentClassification: intent,
-      },
-      mockOverrides?.diagnosis
+    if (onProgress) {
+      onProgress({ agent: 'DiagnosisAgent', status: 'started', thought: 'Analyzing learner context & goals...' });
+    }
+
+    const diagnosisResult = await runStageWithTimeoutAndRetry(
+      'DiagnosisAgent',
+      () => runDiagnosisAgent(
+        {
+          learnerId: learnerState.learnerId,
+          rawGoalStatement: userMessage,
+          conversationHistory,
+          currentSlotState,
+          contextArtifacts,
+          intentClassification: intent,
+        },
+        mockOverrides?.diagnosis
+      ),
+      15000,
+      onProgress
     );
+
+    if (onProgress) {
+      onProgress({ agent: 'DiagnosisAgent', status: 'done', thought: 'Synthesized learning goal objective.' });
+    }
 
     // Step 2b: Code-side Slot Filling Validation, Overwrite Protection, & Hard Cap
     const slotUpdate = processSlotUpdate(
@@ -178,30 +240,60 @@ export class KlaivoOrchestrator {
     let skeleton: TreeSkeleton;
     let isFallback = false;
 
+    if (onProgress) {
+      onProgress({ agent: 'CurriculumDrafter', status: 'started', thought: 'Drafting prerequisite concept nodes...' });
+    }
+
     try {
-      const drafterResult = await runCurriculumDrafter(
-        {
-          treeId,
-          learnerId: learnerState.learnerId,
-          currentGoal: learnerState.currentGoal,
-          vocabularyLevel: learnerState.vocabularyLevel,
-          masteryMap: learnerState.masteryMap,
-        },
-        mockOverrides?.skeleton
+      const drafterResult = await runStageWithTimeoutAndRetry(
+        'CurriculumDrafter',
+        () => runCurriculumDrafter(
+          {
+            treeId,
+            learnerId: learnerState.learnerId,
+            currentGoal: learnerState.currentGoal,
+            vocabularyLevel: learnerState.vocabularyLevel,
+            masteryMap: learnerState.masteryMap,
+          },
+          mockOverrides?.skeleton
+        ),
+        15000,
+        onProgress
       );
       skeleton = drafterResult.output;
+      if (onProgress) {
+        onProgress({ agent: 'CurriculumDrafter', status: 'done', thought: 'Draft curriculum generated.', payload: { skeleton } });
+      }
     } catch (drafterErr: any) {
       skeleton = createStarterSkeleton(learnerState.currentGoal, learnerState.learnerId);
       isFallback = true;
+      if (onProgress) {
+        onProgress({ agent: 'CurriculumDrafter', status: 'error', thought: 'Drafting timeout — generated minimal starter skeleton.', payload: { skeleton } });
+      }
     }
 
     // Step 4: Curriculum Verifier (Non-blocking fallback)
+    if (onProgress) {
+      onProgress({ agent: 'CurriculumVerifier', status: 'started', thought: 'Verifying curriculum against domain rubrics...' });
+    }
+
     try {
-      const verifierResult = await runCurriculumVerifier({ skeleton });
+      const verifierResult = await runStageWithTimeoutAndRetry(
+        'CurriculumVerifier',
+        () => runCurriculumVerifier({ skeleton }),
+        15000,
+        onProgress
+      );
       skeleton = verifierResult.output;
+      if (onProgress) {
+        onProgress({ agent: 'CurriculumVerifier', status: 'done', thought: 'Verified curriculum against domain rubrics.', payload: { skeleton } });
+      }
     } catch (verifierErr: any) {
       skeleton.verificationStatus = 'verified_with_gaps';
       skeleton.verificationNotes.push('Verification skipped due to reference search unavailability.');
+      if (onProgress) {
+        onProgress({ agent: 'CurriculumVerifier', status: 'error', thought: 'Verifier timeout — showing best draft with unverified markers.', payload: { skeleton } });
+      }
     }
 
     return {

@@ -14,16 +14,23 @@
     startY = 0;
     nodes = [];
     onNodeClickCallback = null;
+    thinkingHudEl = null;
+    thinkingAgentEl = null;
+    thinkingStreamEl = null;
     constructor(svgId) {
       this.svg = document.getElementById(svgId);
       this.viewport = document.getElementById("canvas-viewport");
       this.edgesGroup = document.getElementById("svg-edges");
       this.nodesGroup = document.getElementById("svg-nodes");
+      this.thinkingHudEl = document.getElementById("canvas-thinking-hud");
+      this.thinkingAgentEl = document.getElementById("thinking-agent-name");
+      this.thinkingStreamEl = document.getElementById("thinking-stream-text");
       this.initDefs();
       this.initEvents();
     }
     /** Initialize SVG Defs (Patterns, Gradients, Filters) */
     initDefs() {
+      if (!this.svg) return;
       let defs = this.svg.querySelector("defs");
       if (!defs) {
         defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
@@ -48,10 +55,15 @@
         bgRect.setAttribute("width", "100%");
         bgRect.setAttribute("height", "100%");
         bgRect.setAttribute("fill", "url(#canvas-grid-pattern)");
-        this.svg.insertBefore(bgRect, this.viewport);
+        if (this.viewport) {
+          this.svg.insertBefore(bgRect, this.viewport);
+        } else {
+          this.svg.appendChild(bgRect);
+        }
       }
     }
     initEvents() {
+      if (!this.svg) return;
       this.svg.addEventListener("mousedown", (e) => {
         if (e.target.closest(".svg-node-group")) return;
         this.isDragging = true;
@@ -93,6 +105,7 @@
       document.getElementById("zoom-reset-btn")?.addEventListener("click", () => this.resetView());
     }
     zoomStep(factor) {
+      if (!this.svg) return;
       const width = this.svg.clientWidth || 800;
       const height = this.svg.clientHeight || 600;
       const canvasCenterX = (width / 2 - this.panX) / this.zoom;
@@ -113,7 +126,7 @@
       }
     }
     autoCenterTree(nodes) {
-      if (!nodes || nodes.length === 0) return;
+      if (!nodes || nodes.length === 0 || !this.svg) return;
       let minX = Infinity, maxX = -Infinity;
       let minY = Infinity, maxY = -Infinity;
       nodes.forEach((n) => {
@@ -137,16 +150,85 @@
       this.applyTransform();
     }
     applyTransform() {
-      this.viewport.setAttribute("transform", `translate(${this.panX}, ${this.panY}) scale(${this.zoom})`);
+      if (this.viewport) {
+        this.viewport.setAttribute("transform", `translate(${this.panX}, ${this.panY}) scale(${this.zoom})`);
+      }
+    }
+    // ── Ghostly Thinking Stream HUD Public API ──
+    showThinking(agentName, thoughtText) {
+      if (!this.thinkingHudEl) this.thinkingHudEl = document.getElementById("canvas-thinking-hud");
+      if (!this.thinkingAgentEl) this.thinkingAgentEl = document.getElementById("thinking-agent-name");
+      if (!this.thinkingStreamEl) this.thinkingStreamEl = document.getElementById("thinking-stream-text");
+      if (this.thinkingAgentEl) this.thinkingAgentEl.textContent = agentName;
+      if (this.thinkingStreamEl) {
+        this.thinkingStreamEl.textContent = thoughtText;
+        this.thinkingStreamEl.classList.remove("error-text");
+      }
+      const dot = this.thinkingHudEl?.querySelector(".thinking-hud-dot");
+      if (dot) {
+        dot.className = "thinking-hud-dot";
+      }
+      if (this.thinkingHudEl) {
+        this.thinkingHudEl.classList.remove("hidden");
+      }
+    }
+    showThinkingError(agentName, errorMessage) {
+      if (!this.thinkingHudEl) this.thinkingHudEl = document.getElementById("canvas-thinking-hud");
+      if (!this.thinkingAgentEl) this.thinkingAgentEl = document.getElementById("thinking-agent-name");
+      if (!this.thinkingStreamEl) this.thinkingStreamEl = document.getElementById("thinking-stream-text");
+      if (this.thinkingAgentEl) this.thinkingAgentEl.textContent = agentName;
+      if (this.thinkingStreamEl) {
+        this.thinkingStreamEl.textContent = errorMessage;
+        this.thinkingStreamEl.classList.add("error-text");
+      }
+      const dot = this.thinkingHudEl?.querySelector(".thinking-hud-dot");
+      if (dot) {
+        dot.className = "thinking-hud-dot error";
+      }
+      if (this.thinkingHudEl) {
+        this.thinkingHudEl.classList.remove("hidden");
+      }
+    }
+    hideThinking(finalStatus) {
+      if (!this.thinkingHudEl) this.thinkingHudEl = document.getElementById("canvas-thinking-hud");
+      if (!this.thinkingStreamEl) this.thinkingStreamEl = document.getElementById("thinking-stream-text");
+      if (finalStatus && this.thinkingStreamEl) {
+        this.thinkingStreamEl.textContent = finalStatus;
+        this.thinkingStreamEl.classList.remove("error-text");
+        const dot = this.thinkingHudEl?.querySelector(".thinking-hud-dot");
+        if (dot) dot.className = "thinking-hud-dot verified";
+        setTimeout(() => {
+          if (this.thinkingHudEl) this.thinkingHudEl.classList.add("hidden");
+        }, 2400);
+      } else if (this.thinkingHudEl) {
+        this.thinkingHudEl.classList.add("hidden");
+      }
     }
     onNodeClick(callback) {
       this.onNodeClickCallback = callback;
     }
-    render(nodes) {
+    render(nodes, animate = true) {
+      const oldNodes = this.nodes;
       this.nodes = nodes;
+      if (!nodes || nodes.length === 0) {
+        this.nodesGroup.innerHTML = "";
+        this.edgesGroup.innerHTML = "";
+        return;
+      }
+      const newIdSet = new Set(nodes.map((n) => n.id));
+      oldNodes.forEach((oldNode) => {
+        if (!newIdSet.has(oldNode.id)) {
+          const oldGroup = document.getElementById(`node-group-${oldNode.id}`);
+          if (oldGroup) {
+            oldGroup.classList.add("dissolving");
+            setTimeout(() => {
+              if (oldGroup.parentNode) oldGroup.parentNode.removeChild(oldGroup);
+            }, 350);
+          }
+        }
+      });
       this.nodesGroup.innerHTML = "";
       this.edgesGroup.innerHTML = "";
-      if (!nodes || nodes.length === 0) return;
       const nodeMap = {};
       nodes.forEach((n) => {
         nodeMap[n.id] = n;
@@ -156,17 +238,17 @@
           node.dependencies.forEach((depId) => {
             const parentNode = nodeMap[depId];
             if (parentNode) {
-              this.drawConnection(parentNode, node);
+              this.drawConnection(parentNode, node, animate);
             }
           });
         }
       });
       nodes.forEach((node) => {
-        this.drawNode(node);
+        this.drawNode(node, animate);
       });
       this.autoCenterTree(nodes);
     }
-    drawConnection(parent, child) {
+    drawConnection(parent, child, animate = true) {
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       const pX = parent.x + 210;
       const pY = parent.y + 43;
@@ -184,10 +266,24 @@
         path.setAttribute("stroke", "rgba(255, 255, 255, 0.12)");
       }
       this.edgesGroup.appendChild(path);
+      if (animate) {
+        const length = Math.ceil(path.getTotalLength ? path.getTotalLength() || 300 : 300);
+        path.style.setProperty("--path-len", `${length}`);
+        path.classList.add("animated");
+        const edgeDelay = Math.max(0, (child.order_index - 0.5) * 180);
+        path.style.animationDelay = `${edgeDelay}ms`;
+      }
     }
-    drawNode(node) {
+    drawNode(node, animate = true) {
       const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
       group.setAttribute("class", `svg-node-group ${node.status}`);
+      group.setAttribute("id", `node-group-${node.id}`);
+      group.style.transformOrigin = `${node.x + 105}px ${node.y + 43}px`;
+      if (animate) {
+        group.classList.add("animated");
+        const nodeDelay = Math.max(0, node.order_index * 180);
+        group.style.animationDelay = `${nodeDelay}ms`;
+      }
       group.setAttribute("id", `node-group-${node.id}`);
       const width = 210;
       const height = 86;
@@ -810,7 +906,11 @@ This will clear chat history for this concept node so you can re-learn it from s
           }
           if (exitNodeBtn) exitNodeBtn.style.display = "none";
           chatHistory.innerHTML = "";
-          loadGlobalChat();
+          if (data.messages && Array.isArray(data.messages)) {
+            data.messages.forEach((msg) => {
+              appendMessage(msg.sender === "user" ? "user" : "assistant", msg.content);
+            });
+          }
         }
       } catch (err) {
         console.error("Error loading session from nav:", err);
@@ -999,9 +1099,13 @@ This will clear chat history for this concept node so you can re-learn it from s
     });
     suggestionChips.forEach((chip) => {
       chip.addEventListener("click", () => {
-        const prompt2 = chip.dataset.prompt || chip.textContent?.trim() || "";
-        welcomeInput.value = prompt2;
-        welcomeInput.focus();
+        const prompt2 = chip.dataset.prompt || chip.getAttribute("data-prompt") || chip.textContent?.trim() || "";
+        if (prompt2) {
+          welcomeInput.value = prompt2;
+          welcomeInput.style.height = "auto";
+          welcomeInput.style.height = `${Math.min(welcomeInput.scrollHeight, 160)}px`;
+          startSession();
+        }
       });
     });
     welcomeInput.addEventListener("keydown", (e) => {
@@ -1010,6 +1114,64 @@ This will clear chat history for this concept node so you can re-learn it from s
         startSession();
       }
     });
+    let activeStreamReader = null;
+    async function readSseStream(url, options, onEvent) {
+      if (activeStreamReader) {
+        try {
+          activeStreamReader.cancel();
+        } catch (_) {
+        }
+        activeStreamReader = null;
+      }
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          ...options.headers || {},
+          "Accept": "text/event-stream"
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`Stream request failed with status ${response.status}`);
+      }
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("Response body reader unavailable");
+      activeStreamReader = reader;
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const blocks = buffer.split("\n\n");
+          buffer = blocks.pop() || "";
+          for (const block of blocks) {
+            if (!block.trim()) continue;
+            let eventName = "message";
+            let eventData = "";
+            const lines = block.split("\n");
+            for (const line of lines) {
+              if (line.startsWith("event:")) {
+                eventName = line.substring(6).trim();
+              } else if (line.startsWith("data:")) {
+                eventData += line.substring(5).trim();
+              }
+            }
+            if (eventData) {
+              try {
+                const parsed = JSON.parse(eventData);
+                onEvent(eventName, parsed);
+              } catch (_) {
+              }
+            }
+          }
+        }
+      } finally {
+        if (activeStreamReader === reader) {
+          activeStreamReader = null;
+        }
+      }
+    }
     welcomeSendBtn.addEventListener("click", startSession);
     async function startSession() {
       const prompt2 = welcomeInput.value.trim();
@@ -1018,28 +1180,50 @@ This will clear chat history for this concept node so you can re-learn it from s
         return;
       }
       enterDiscoveryMode();
+      activateSplitScreen();
+      canvas.showThinking("IntentAgent", "Initializing intake & intent classification...");
       appendMessage("user", prompt2);
       const thinkingWrapper = appendMessage("assistant", '<div class="thinking-dots"><span></span><span></span><span></span></div>');
       try {
         const formData = new FormData();
         formData.append("initial_prompt", prompt2);
         selectedFiles.forEach((file) => formData.append("documents", file));
-        const response = await fetch("/api/sessions/start", { method: "POST", body: formData });
-        if (!response.ok) throw new Error("Failed to start session");
-        const data = await response.json();
-        sessionId = data.sessionId;
-        calibration = data.calibration.level;
+        let finalData = null;
+        await readSseStream("/api/sessions/start?stream=true", {
+          method: "POST",
+          body: formData
+        }, (event, data) => {
+          if (event === "agent_progress") {
+            if (data.status === "error") {
+              canvas.showThinkingError(data.agent, data.thought || "Stage delayed \u2014 retrying...");
+            } else {
+              canvas.showThinking(data.agent, data.thought || "Processing stage...");
+            }
+            if (data.payload?.nodes) {
+              nodes = data.payload.nodes;
+              canvas.render(nodes, true);
+              updateStats();
+            }
+          } else if (event === "pipeline_complete") {
+            finalData = data;
+          }
+        });
+        if (!finalData) throw new Error("Session creation stream ended unexpectedly.");
+        sessionId = finalData.sessionId;
+        calibration = finalData.calibration?.level || "intermediate";
         thinkingWrapper.remove();
         if (headerCalibration) headerCalibration.textContent = calibration;
         if (headerStatus) headerStatus.classList.remove("hidden");
         if (canvasSessionTitle) canvasSessionTitle.textContent = prompt2;
-        appendMessage("assistant", data.diagnosticQuestion);
-        if (data.nodes && data.nodes.length > 0) {
-          nodes = data.nodes;
-          canvas.render(nodes);
+        appendMessage("assistant", finalData.diagnosticQuestion);
+        if (finalData.nodes && finalData.nodes.length > 0) {
+          nodes = finalData.nodes;
+          canvas.render(nodes, true);
           updateStats();
-          activateSplitScreen();
+          canvas.hideThinking("\u2713 Curriculum Verified against Domain Rubrics");
           appendMessage("assistant", "\u{1F389} Your personalized learning tree has been built! Click on the first unlocked node on the right to start learning.");
+        } else {
+          canvas.hideThinking();
         }
         selectedFiles = [];
         welcomeFilesList.innerHTML = "";
@@ -1047,6 +1231,7 @@ This will clear chat history for this concept node so you can re-learn it from s
       } catch (err) {
         console.error(err);
         thinkingWrapper.remove();
+        canvas.showThinkingError("Orchestrator", `Session intake error: ${err.message}`);
         appendMessage("assistant", `Something went wrong starting your session: ${err.message}`);
       }
     }
@@ -1073,10 +1258,14 @@ This will clear chat history for this concept node so you can re-learn it from s
       document.querySelectorAll(".svg-node-group").forEach((el) => el.classList.remove("active"));
       document.getElementById(`node-group-${node.id}`)?.classList.add("active");
       activeNodeId = node.id;
+      node.status = "in_progress";
+      fetch(`/api/sessions/${sessionId}/nodes/${node.id}/open`, { method: "POST" }).catch(() => {
+      });
+      loadNavigationHistory();
       if (sidebarNodeTitle) sidebarNodeTitle.textContent = node.title;
       if (sidebarNodeStatus) {
-        sidebarNodeStatus.textContent = node.status.toUpperCase();
-        sidebarNodeStatus.className = `node-badge ${node.status}`;
+        sidebarNodeStatus.textContent = "IN_PROGRESS";
+        sidebarNodeStatus.className = `node-badge in_progress`;
       }
       if (exitNodeBtn) exitNodeBtn.style.display = "block";
       chatHistory.innerHTML = "";
@@ -1241,30 +1430,50 @@ This will clear chat history for this concept node so you can re-learn it from s
             }
           }
         } else {
-          const response = await fetch(`/api/sessions/${sessionId}/diagnose`, {
+          activateSplitScreen();
+          canvas.showThinking("DiagnosisAgent", "Processing your response...");
+          let finalData = null;
+          await readSseStream(`/api/sessions/${sessionId}/diagnose?stream=true`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text })
+          }, (event, data) => {
+            if (event === "agent_progress") {
+              if (data.status === "error") {
+                canvas.showThinkingError(data.agent, data.thought || "Stage delayed \u2014 retrying...");
+              } else {
+                canvas.showThinking(data.agent, data.thought || "Processing stage...");
+              }
+              if (data.payload?.nodes) {
+                nodes = data.payload.nodes;
+                canvas.render(nodes, true);
+                updateStats();
+              }
+            } else if (event === "pipeline_complete") {
+              finalData = data;
+            }
           });
-          if (!response.ok) throw new Error("Diagnosis message failed");
-          const data = await response.json();
+          if (!finalData) throw new Error("Diagnosis stream ended unexpectedly.");
           thinkingWrapper.remove();
-          appendMessage("assistant", data.response);
-          if (data.title) {
-            if (canvasSessionTitle) canvasSessionTitle.textContent = data.title;
+          appendMessage("assistant", finalData.response);
+          if (finalData.title) {
+            if (canvasSessionTitle) canvasSessionTitle.textContent = finalData.title;
             loadNavigationHistory();
           }
-          if (data.status === "learning" || data.nodes && data.nodes.length > 0) {
-            nodes = data.nodes;
-            canvas.render(nodes);
+          if (finalData.status === "learning" || finalData.nodes && finalData.nodes.length > 0) {
+            nodes = finalData.nodes;
+            canvas.render(nodes, true);
             updateStats();
-            activateSplitScreen();
+            canvas.hideThinking("\u2713 Curriculum Verified against Domain Rubrics");
             appendMessage("assistant", "\u{1F389} Your personalized learning tree has been built! Click on the first unlocked node on the right to start learning.");
+          } else {
+            canvas.hideThinking();
           }
         }
       } catch (err) {
         console.error(err);
         thinkingWrapper.remove();
+        canvas.showThinkingError("Orchestrator", `Turn error: ${err.message}`);
         appendMessage("assistant", `Sorry, something went wrong: ${err.message}`);
       }
     }
