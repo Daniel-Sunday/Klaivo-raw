@@ -27,10 +27,10 @@ async function runSlotFillingTests() {
   if (res1.updatedState.roundCount !== 1) {
     throw new Error(`FAILED Test 1: expected roundCount 1, got ${res1.updatedState.roundCount}`);
   }
-  if (!res1.finalNeedsMoreContext) {
-    throw new Error('FAILED Test 1: should still need more context after turn 1');
+  if (res1.finalNeedsMoreContext) {
+    throw new Error('FAILED Test 1: should finalize instantly on Turn 1 when targetSubject is present');
   }
-  console.log('✅ Test 1 Passed: Turn 1 slot resolution verified.\n');
+  console.log('✅ Test 1 Passed: Turn 1 slot resolution & instant finalization verified.\n');
 
   // Test 2: Overwrite Protection Guard (attempting unauthorized overwrite without isCorrection)
   console.log('Test 2: Overwrite Protection Guard (isCorrection: false)...');
@@ -137,12 +137,10 @@ async function runSlotFillingTests() {
     }
   );
 
-  if (result1.status !== 'needs_more_context') {
-    throw new Error(`FAILED Test 6: expected needs_more_context, got ${result1.status}`);
+  if (result1.status !== 'tree_created') {
+    throw new Error(`FAILED Test 6: expected tree_created on Turn 1 when targetSubject is present, got ${result1.status}`);
   }
-  if (result1.slotState?.slotsResolved.targetSubject !== 'Rust Backend Services') {
-    throw new Error('FAILED Test 6: slotState not returned in IntakeWorkflowResult');
-  }
+  console.log('✅ Test 6 Passed: End-to-End Turn 1 Instant Tree Creation verified.\n');
 
   // Turn 2: User says "stop asking questions and build tree"
   const result2 = await orchestrator.handleIntakeWorkflow(

@@ -77,31 +77,56 @@ export class KlaivoOrchestrator {
     };
 
     // Step 1: Intent Agent
-    const intentResult = await runIntentAgent(
-      { rawMessage: userMessage, learnerState },
-      mockOverrides?.intent
-    );
+    // Only classify intent on the FIRST turn of a session (no lockedIntent yet).
+    // Re-running this on every follow-up turn was the actual bug: a short answer
+    // fragment like "beginner level" or "for next year's exam" is genuinely
+    // ambiguous as a standalone intent classification, so it kept tripping the
+    // confidence gate and returning the same hardcoded clarification message —
+    // which looked like "stupid questions" and "no memory" to the user, even
+    // though the Diagnosis Agent underneath was tracking state correctly the
+    // whole time.
+    let intent: string;
 
-    // Guardrail 1: Intent Confidence Gate
-    if (intentResult.output.confidence < 0.6 || intentResult.output.needsClarification) {
-      return {
-        status: 'needs_clarification',
-        question: sanitizeUserErrorMessage('IntentAgent', 'Low confidence'),
-        intentOutput: intentResult.output,
-        slotState: currentSlotState,
-      };
-    }
+    if (currentSlotState.lockedIntent) {
+      intent = currentSlotState.lockedIntent;
+      console.log(`[Orchestrator] Using locked intent: ${intent} (skipping re-classification)`);
+    } else {
+      const intentResult = await runIntentAgent(
+        { rawMessage: userMessage, learnerState },
+        mockOverrides?.intent
+      );
 
-    const { intent } = intentResult.output;
+      console.log(
+        `[Orchestrator] Fresh intent classification: ${intentResult.output.intent} ` +
+        `(confidence: ${intentResult.output.confidence})`
+      );
 
-    // Guardrail 2: Short-Circuit Non-Tree Intents
-    if (intent === 'quick_answer' || intent === 'problem_solving' || intent === 'research') {
-      return {
-        status: 'light_response',
-        intent,
-        response: `Direct ${intent} response generated without tree drafting.`,
-        slotState: currentSlotState,
-      };
+      // Guardrail 1: Intent Confidence Gate (first turn only)
+      if (intentResult.output.confidence < 0.6 || intentResult.output.needsClarification) {
+        console.log('[Orchestrator] Confidence gate tripped — returning needs_clarification');
+        return {
+          status: 'needs_clarification',
+          question: sanitizeUserErrorMessage('IntentAgent', 'Low confidence'),
+          intentOutput: intentResult.output,
+          slotState: currentSlotState,
+        };
+      }
+
+      intent = intentResult.output.intent;
+
+      // Guardrail 2: Short-Circuit Non-Tree Intents (first turn only)
+      if (intent === 'quick_answer' || intent === 'problem_solving' || intent === 'research') {
+        return {
+          status: 'light_response',
+          intent,
+          response: `Direct ${intent} response generated without tree drafting.`,
+          slotState: currentSlotState,
+        };
+      }
+
+      // Lock it in so subsequent turns skip re-classification entirely.
+      currentSlotState.lockedIntent = intent;
+      console.log(`[Orchestrator] Locking intent for session: ${intent}`);
     }
 
     const conversationHistory = learnerState.chatHistory && learnerState.chatHistory.length > 0

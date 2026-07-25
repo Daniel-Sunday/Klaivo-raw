@@ -227,6 +227,10 @@ export const DiagnosisSlotStateSchema = z.object({
   roundCount: z.number().int().min(0).default(0),
   forceProceedTriggered: z.boolean().default(false),
   blockedOverwrites: z.array(BlockedOverwriteEntrySchema).default([]),
+  // Set once, on the turn where Intent Agent successfully classifies the session.
+  // Follow-up turns reuse this instead of re-running Intent Agent on an isolated
+  // fragment of text, which produced false low-confidence "needs_clarification" loops.
+  lockedIntent: z.string().optional(),
 });
 export type DiagnosisSlotState = z.infer<typeof DiagnosisSlotStateSchema>;
 
