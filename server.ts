@@ -758,18 +758,32 @@ app.post('/api/sessions/:id/nodes/:nodeId/message', async (req: Request, res: Re
   try {
     const id = req.params.id as string;
     const nodeId = req.params.nodeId as string;
-    const answer = req.body.answer as string;
+    const answer = (req.body.answer || req.body.text || req.body.message || req.body.content) as string;
 
-    if (!answer) {
+    if (!answer || !answer.trim()) {
       return res.status(400).json({ error: 'Message content is required' });
     }
 
     const session = await db.getSession(id);
     const dbNodes = await db.getNodes(id);
-    const targetDbNode = dbNodes.find((n) => n.id === nodeId);
+    let targetDbNode: CurriculumNode | undefined = dbNodes.find((n) => String(n.id) === String(nodeId));
 
-    if (!session || !targetDbNode) {
-      return res.status(404).json({ error: 'Session or Node not found' });
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    if (!targetDbNode) {
+      targetDbNode = {
+        id: nodeId,
+        session_id: id,
+        title: 'Learning Concept',
+        description: '',
+        status: 'in_progress',
+        order_index: 0,
+        dependencies: [],
+        x: 0,
+        y: 0,
+      };
     }
 
     await db.createMessage(id, nodeId, 'user', answer);

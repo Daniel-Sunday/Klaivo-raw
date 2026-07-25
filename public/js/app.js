@@ -8505,6 +8505,7 @@
       activeNodeId = null;
       nodes = [];
       selectedFiles = [];
+      canvas.render([]);
       welcomeInput.value = "";
       welcomeInput.style.height = "auto";
       welcomeFilesList.innerHTML = "";
@@ -8772,9 +8773,9 @@ This will clear chat history for this concept node so you can re-learn it from s
         activateSplitScreen();
         document.querySelectorAll("#nav-sessions-list .nav-item, #nav-history-list .nav-item").forEach((el) => el.classList.remove("active"));
         if (nodeId) {
-          const targetNode = nodes.find((n) => n.id === nodeId);
+          const targetNode = nodes.find((n) => String(n.id) === String(nodeId));
           if (targetNode) {
-            activeNodeId = nodeId;
+            activeNodeId = targetNode.id;
             if (sidebarNodeTitle) sidebarNodeTitle.textContent = toSentenceCase(targetNode.title);
             if (sidebarNodeStatus) {
               sidebarNodeStatus.textContent = targetNode.status.toUpperCase();
@@ -8782,12 +8783,12 @@ This will clear chat history for this concept node so you can re-learn it from s
             }
             if (exitNodeBtn) exitNodeBtn.style.display = "block";
             document.querySelectorAll(".svg-node-group").forEach((el) => el.classList.remove("active"));
-            document.getElementById(`node-group-${nodeId}`)?.classList.add("active");
+            document.getElementById(`node-group-${targetNode.id}`)?.classList.add("active");
             chatHistory.innerHTML = "";
-            const chatRes = await fetch(`/api/sessions/${sessId}/nodes/${nodeId}/chat`);
+            const chatRes = await fetch(`/api/sessions/${sessId}/nodes/${targetNode.id}/chat`);
             if (chatRes.ok) {
               const historyMsgs = await chatRes.json();
-              historyMsgs.forEach((msg) => appendMessage(msg.sender, msg.content, nodeId));
+              historyMsgs.forEach((msg) => appendMessage(msg.sender, msg.content, targetNode.id));
             }
           }
         } else {
@@ -8804,6 +8805,7 @@ This will clear chat history for this concept node so you can re-learn it from s
             });
           }
         }
+        loadNavigationHistory();
       } catch (err) {
         console.error("Error loading session from nav:", err);
       }
@@ -9083,6 +9085,9 @@ This will clear chat history for this concept node so you can re-learn it from s
         welcomeInput.focus();
         return;
       }
+      nodes = [];
+      activeNodeId = null;
+      canvas.render([]);
       enterDiscoveryMode();
       activateSplitScreen();
       canvas.showThinking("IntentAgent", "Initializing intake & intent classification...");
@@ -9303,14 +9308,15 @@ This will clear chat history for this concept node so you can re-learn it from s
           const response = await fetch(`/api/sessions/${sessionId}/nodes/${activeNodeId}/message`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ answer: text })
+            body: JSON.stringify({ answer: text, text, content: text })
           });
           if (!response.ok) throw new Error("Failed to send message");
           const contentType = response.headers.get("content-type");
           if (contentType && contentType.includes("application/json")) {
             const data = await response.json();
             thinkingWrapper.remove();
-            appendMessage("assistant", data.feedback, activeNodeId);
+            const replyText = data.feedback || data.response || data.content || "Response received.";
+            appendMessage("assistant", replyText, activeNodeId);
             if (data.nodesUpdated) {
               nodes = data.nodes;
               canvas.render(nodes);
