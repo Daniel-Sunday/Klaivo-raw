@@ -160,17 +160,170 @@ async function buildLearnerState(sessionId: string, session: any): Promise<Learn
 
 // --- API ROUTES ---
 
+async function getAuthUser(req: Request): Promise<any | null> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const token = authHeader.substring(7);
+  const supabase = db.getSupabase();
+  if (!supabase) return null;
+  try {
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) return null;
+    return user;
+  } catch (_) {
+    return null;
+  }
+}
+
 /**
- * GET /api/sessions: Fetch all sessions & nodes for left nav bar history
+ * POST /api/auth/signup: User Registration via Supabase Auth
+ */
+app.post('/api/auth/signup', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { email, password, full_name } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    const supabase = db.getSupabase();
+    if (!supabase) {
+      return res.status(503).json({ error: 'Supabase Auth is not configured on server' });
+    }
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: full_name || email.split('@')[0],
+        },
+      },
+    });
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+    const user = data.user ? {
+      id: data.user.id,
+      email: data.user.email,
+      display_name: data.user.user_metadata?.full_name || data.user.email?.split('@')[0],
+      avatar_url: data.user.user_metadata?.avatar_url,
+    } : null;
+    return res.json({
+      user,
+      token: data.session?.access_token || null,
+      session: data.session,
+    });
+  } catch (err: any) {
+    console.error('Signup error:', err);
+    return res.status(500).json({ error: err.message || 'Signup failed' });
+  }
+});
+
+/**
+ * POST /api/auth/login: User Authentication via Supabase Auth
+ */
+app.post('/api/auth/login', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    const supabase = db.getSupabase();
+    if (!supabase) {
+      return res.status(503).json({ error: 'Supabase Auth is not configured on server' });
+    }
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) {
+      return res.status(401).json({ error: error.message });
+    }
+    const user = data.user ? {
+      id: data.user.id,
+      email: data.user.email,
+      display_name: data.user.user_metadata?.full_name || data.user.email?.split('@')[0],
+      avatar_url: data.user.user_metadata?.avatar_url,
+    } : null;
+    return res.json({
+      user,
+      token: data.session?.access_token || null,
+      session: data.session,
+    });
+  } catch (err: any) {
+    console.error('Login error:', err);
+    return res.status(500).json({ error: err.message || 'Login failed' });
+  }
+});
+
+/**
+ * POST /api/auth/logout: Sign out active session
+ */
+app.post('/api/auth/logout', async (req: Request, res: Response): Promise<any> => {
+  try {
+    return res.json({ success: true });
+  } catch (_) {
+    return res.json({ success: true });
+  }
+});
+
+/**
+ * GET /api/auth/me: Get active authenticated user profile
+ */
+app.get('/api/auth/me', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const authUser = await getAuthUser(req);
+    if (!authUser) {
+      return res.status(401).json({ error: 'Unauthenticated' });
+    }
+    return res.json({
+      user: {
+        id: authUser.id,
+        email: authUser.email,
+        display_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0],
+        avatar_url: authUser.user_metadata?.avatar_url,
+      },
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/sessions/claim: Claim guest session upon sign up / log in
+ */
+app.post('/api/sessions/claim', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const authUser = await getAuthUser(req);
+    if (!authUser) {
+      return res.status(401).json({ error: 'Unauthenticated' });
+    }
+    const { sessionId } = req.body;
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId is required' });
+    }
+    await db.claimSessionForUser(sessionId, authUser.id);
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/sessions: Fetch user sessions & nodes for left nav bar history
  */
 app.get('/api/sessions', async (req: Request, res: Response): Promise<any> => {
   try {
-    const rawSessions = await db.getAllSessionsWithNodes();
-    const sessions = rawSessions.map((item) => ({
-      ...item.session,
-      nodes: item.nodes,
-    }));
-    return res.json({ sessions });
+    const authUser = await getAuthUser(req);
+    if (!authUser) {
+      // Perplexity style: session history is only accessible when logged in
+      return res.json({ sessions: [] });
+    }
+    const userSessions = await db.getSessions(authUser.id);
+    const results = [];
+    for (const session of userSessions) {
+      const nodes = await db.getNodes(session.id);
+      results.push({ ...session, nodes });
+    }
+    return res.json({ sessions: results });
   } catch (err: any) {
     console.error('Error fetching sessions list:', err);
     return res.status(500).json({ error: err.message });
@@ -201,6 +354,9 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
     if (!initial_prompt) {
       return res.status(400).json({ error: 'initial_prompt is required' });
     }
+
+    const authUser = await getAuthUser(req);
+    const userId = authUser ? authUser.id : undefined;
 
     const sessionId = crypto.randomUUID();
 
@@ -250,6 +406,7 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders?.();
 
       const sendSSE = (event: string, data: any) => {
         res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -279,7 +436,7 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
       if (intakeResult.status === 'tree_created') {
         const skeleton = intakeResult.tree;
         const formattedNodes = mapTreeSkeletonToCurriculumNodes(sessionId, skeleton);
-        await db.createSession(sessionId, sessionTitle, skeleton.goalSummary, 'learning', calibration);
+        await db.createSession(sessionId, sessionTitle, skeleton.goalSummary, 'learning', calibration, userId);
         if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
         await db.saveNodes(sessionId, formattedNodes);
         await db.createMessage(sessionId, null, 'user', initial_prompt);
@@ -298,7 +455,7 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
         });
       } else {
         const q = (intakeResult as any).question || (intakeResult as any).response || 'Please provide more details on your learning objective.';
-        await db.createSession(sessionId, sessionTitle, 'learning', 'diagnosing', calibration);
+        await db.createSession(sessionId, sessionTitle, 'learning', 'diagnosing', calibration, userId);
         if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
         await db.createMessage(sessionId, null, 'user', initial_prompt);
         await db.createMessage(sessionId, null, 'assistant', q);
@@ -332,7 +489,7 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
 
     if (intakeResult.status === 'needs_clarification') {
       const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
-      await db.createSession(sessionId, sessionTitle, 'learning', 'diagnosing', calibration);
+      await db.createSession(sessionId, sessionTitle, 'learning', 'diagnosing', calibration, userId);
       if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
       await db.createMessage(sessionId, null, 'user', initial_prompt);
       await db.createMessage(sessionId, null, 'assistant', intakeResult.question);
@@ -349,7 +506,7 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
 
     if (intakeResult.status === 'needs_more_context') {
       const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
-      await db.createSession(sessionId, sessionTitle, 'learning', 'diagnosing', calibration);
+      await db.createSession(sessionId, sessionTitle, 'learning', 'diagnosing', calibration, userId);
       if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
       await db.createMessage(sessionId, null, 'user', initial_prompt);
       await db.createMessage(sessionId, null, 'assistant', intakeResult.question);
@@ -366,7 +523,7 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
 
     if (intakeResult.status === 'light_response') {
       const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
-      await db.createSession(sessionId, sessionTitle, intakeResult.intent, 'learning', calibration);
+      await db.createSession(sessionId, sessionTitle, intakeResult.intent, 'learning', calibration, userId);
       if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
       await db.createMessage(sessionId, null, 'user', initial_prompt);
       await db.createMessage(sessionId, null, 'assistant', intakeResult.response);
@@ -386,7 +543,7 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
     const formattedNodes = mapTreeSkeletonToCurriculumNodes(sessionId, skeleton);
 
     const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
-    await db.createSession(sessionId, sessionTitle, skeleton.goalSummary, 'learning', calibration);
+    await db.createSession(sessionId, sessionTitle, skeleton.goalSummary, 'learning', calibration, userId);
     if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
     await db.saveNodes(sessionId, formattedNodes);
     await db.createMessage(sessionId, null, 'user', initial_prompt);

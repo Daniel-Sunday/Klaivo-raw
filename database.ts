@@ -34,11 +34,16 @@ if (isSupabaseConfigured) {
   console.log('[Database] Using SQLite database backend.');
 }
 
+export function getSupabase(): SupabaseClient | null {
+  return supabase;
+}
+
 export async function initDb(): Promise<void> {
   // Always initialize SQLite tables to guarantee zero-fail local fallbacks
   sqliteDb.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
+      user_id TEXT,
       title TEXT NOT NULL,
       intent TEXT,
       status TEXT NOT NULL DEFAULT 'diagnosing',
@@ -50,6 +55,9 @@ export async function initDb(): Promise<void> {
   `);
   try {
     sqliteDb.exec(`ALTER TABLE sessions ADD COLUMN slot_state TEXT`);
+  } catch (_) {}
+  try {
+    sqliteDb.exec(`ALTER TABLE sessions ADD COLUMN user_id TEXT`);
   } catch (_) {}
   sqliteDb.exec(`
     CREATE TABLE IF NOT EXISTS nodes (
@@ -158,7 +166,8 @@ export async function createSession(
   title?: string,
   intent?: string,
   calibrationOrStatus?: any,
-  calibrationParam?: any
+  calibrationParam?: any,
+  userId?: string
 ): Promise<Session> {
   let sessionObj: Omit<Session, 'created_at' | 'updated_at'>;
 
@@ -167,6 +176,7 @@ export async function createSession(
   } else {
     sessionObj = {
       id: idOrSession,
+      user_id: userId,
       title: title || 'Learning Session',
       intent: intent || 'learning',
       status: (typeof calibrationOrStatus === 'string' ? calibrationOrStatus : 'diagnosing') as 'diagnosing' | 'learning',
@@ -180,6 +190,7 @@ export async function createSession(
     try {
       await supabase.from('sessions').insert({
         id: sessionObj.id,
+        user_id: sessionObj.user_id || null,
         title: sessionObj.title,
         intent: sessionObj.intent,
         status: sessionObj.status,
@@ -189,8 +200,8 @@ export async function createSession(
     } catch (_) {}
   }
   sqliteDb
-    .prepare('INSERT OR REPLACE INTO sessions (id, title, intent, status, calibration, slot_state) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(sessionObj.id, sessionObj.title, sessionObj.intent, sessionObj.status, calJson, slotJson);
+    .prepare('INSERT OR REPLACE INTO sessions (id, user_id, title, intent, status, calibration, slot_state) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(sessionObj.id, sessionObj.user_id || null, sessionObj.title, sessionObj.intent, sessionObj.status, calJson, slotJson);
 
   return getSession(sessionObj.id) as Promise<Session>;
 }
@@ -253,8 +264,17 @@ export async function updateSessionSlotState(id: string, slotState: any): Promis
   await updateSession(id, { slot_state: slotState });
 }
 
-export async function getSessions(): Promise<Session[]> {
-  const sqliteRows = sqliteDb.prepare('SELECT * FROM sessions ORDER BY created_at DESC').all();
+export async function claimSessionForUser(sessionId: string, userId: string): Promise<void> {
+  await updateSession(sessionId, { user_id: userId });
+}
+
+export async function getSessions(userId?: string): Promise<Session[]> {
+  let sqliteRows: any[];
+  if (userId) {
+    sqliteRows = sqliteDb.prepare('SELECT * FROM sessions WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+  } else {
+    sqliteRows = sqliteDb.prepare('SELECT * FROM sessions ORDER BY created_at DESC').all();
+  }
   const sqliteSessions = sqliteRows.map((row: any) => ({
     ...row,
     calibration: typeof row.calibration === 'string' ? JSON.parse(row.calibration) : row.calibration,
@@ -263,7 +283,11 @@ export async function getSessions(): Promise<Session[]> {
 
   if (supabase) {
     try {
-      const { data, error } = await supabase.from('sessions').select('*').order('created_at', { ascending: false });
+      let query = supabase.from('sessions').select('*');
+      if (userId) {
+        query = query.eq('user_id', userId);
+      }
+      const { data, error } = await query.order('created_at', { ascending: false });
       if (!error && data && data.length > 0) {
         const supabaseSessions = data.map((row: any) => ({
           ...row,

@@ -1,15 +1,21 @@
 import { ConceptCanvas } from './canvas';
 import { TaskSandbox } from './sandbox';
+import { authManager } from './auth';
 import { CurriculumNode, Message } from '../../types';
 
 document.addEventListener('DOMContentLoaded', () => {
-  // --- State ---
+  // --- Auth & State ---
   let sessionId: string | null = null;
   let activeNodeId: string | null = null;
   let currentNodeOpenRequestId: number = 0;
   let calibration: string = 'Beginner';
   let nodes: CurriculumNode[] = [];
   let selectedFiles: File[] = [];
+
+  authManager.initUI(() => {
+    loadNavigationHistory();
+  });
+  authManager.checkSession();
 
   // --- Screens ---
   const welcomeScreen    = document.getElementById('welcome-screen') as HTMLElement;
@@ -247,7 +253,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Fetch & Render Navigation History from backend
   async function loadNavigationHistory(): Promise<void> {
     try {
-      const res = await fetch('/api/sessions');
+      const res = await fetch('/api/sessions', {
+        headers: authManager.getAuthHeaders(),
+      });
       if (!res.ok) return;
       const data = await res.json();
       const rawSessions = data.sessions || [];
@@ -704,7 +712,102 @@ document.addEventListener('DOMContentLoaded', () => {
     return formatted;
   }
 
-  // Active Recall Mask Click Handler (reveals blurred terms)
+  // ══════════════════════════════════════════════════
+  // Frontend Typewriter Progressive Reveal Animation
+  // ══════════════════════════════════════════════════
+  interface ActiveTypewriter {
+    bubble: HTMLElement;
+    fullText: string;
+    finish: () => void;
+    cancel: () => void;
+  }
+
+  let activeTypewriter: ActiveTypewriter | null = null;
+
+  function animateTextReveal(
+    bubble: HTMLElement,
+    fullText: string,
+    requestId?: number,
+    targetNodeId?: string | null
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      if (activeTypewriter) {
+        activeTypewriter.finish();
+      }
+
+      if (!fullText || !bubble) {
+        resolve();
+        return;
+      }
+
+      let timerId: any = null;
+      let charIndex = 0;
+      const totalLength = fullText.length;
+      let isCompleted = false;
+
+      // Calculate reveal pacing proportionally to response length (~240 chars / sec target)
+      const speedMs = 18;
+      const targetCharsPerSec = 240;
+      const targetTotalMs = Math.min(7000, Math.max(350, (totalLength / targetCharsPerSec) * 1000));
+      const totalTicks = Math.max(1, Math.round(targetTotalMs / speedMs));
+      const charsPerTick = Math.max(1, Math.ceil(totalLength / totalTicks));
+
+      const finish = () => {
+        if (isCompleted) return;
+        isCompleted = true;
+        if (timerId) clearInterval(timerId);
+        renderMessageBubble(bubble, fullText, false);
+        if (chatHistory) chatHistory.scrollTop = chatHistory.scrollHeight;
+        if (activeTypewriter?.bubble === bubble) {
+          activeTypewriter = null;
+        }
+        resolve();
+      };
+
+      const cancel = () => {
+        if (isCompleted) return;
+        isCompleted = true;
+        if (timerId) clearInterval(timerId);
+        renderMessageBubble(bubble, fullText, false);
+        if (activeTypewriter?.bubble === bubble) {
+          activeTypewriter = null;
+        }
+        resolve();
+      };
+
+      activeTypewriter = { bubble, fullText, finish, cancel };
+
+      timerId = setInterval(() => {
+        if (requestId !== undefined && requestId !== currentNodeOpenRequestId) {
+          cancel();
+          return;
+        }
+        if (targetNodeId !== undefined && targetNodeId !== activeNodeId) {
+          cancel();
+          return;
+        }
+
+        charIndex += charsPerTick;
+
+        // Advance to nearest word boundary so words complete smoothly without slicing mid-word
+        if (charIndex < totalLength) {
+          while (charIndex < totalLength && !/\s|[.,!?;:]/.test(fullText[charIndex])) {
+            charIndex++;
+          }
+        }
+
+        if (charIndex >= totalLength) {
+          finish();
+        } else {
+          const partialText = fullText.slice(0, charIndex);
+          renderMessageBubble(bubble, partialText, true);
+          if (chatHistory) chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+      }, speedMs);
+    });
+  }
+
+  // Active Recall Mask Click Handler
   chatHistory?.addEventListener('click', (e: Event) => {
     const target = e.target as HTMLElement;
     if (target && target.classList.contains('active-recall-blur')) {
@@ -712,7 +815,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  function renderMessageBubble(bubble: HTMLElement, content: string): void {
+  function renderMessageBubble(bubble: HTMLElement, content: string, isAnimating: boolean = false): void {
+    const cursorHtml = isAnimating ? '<span class="typing-cursor"></span>' : '';
     if (content.includes('thinking-dots')) {
       bubble.innerHTML = content;
       return;
@@ -727,10 +831,10 @@ document.addEventListener('DOMContentLoaded', () => {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
             Check Your Understanding
           </div>
-          <p>${formatMarkdown(questionText)}</p>
+          <p>${formatMarkdown(questionText)}${cursorHtml}</p>
         </div>`;
     } else {
-      bubble.innerHTML = `<p>${formatMarkdown(content)}</p>`;
+      bubble.innerHTML = `<p>${formatMarkdown(content)}${cursorHtml}</p>`;
     }
   }
 
@@ -814,6 +918,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ...options,
       headers: {
         ...(options.headers || {}),
+        ...authManager.getAuthHeaders(),
         'Accept': 'text/event-stream',
       },
     });
@@ -918,6 +1023,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!finalData) throw new Error('Session creation stream ended unexpectedly.');
 
       sessionId     = finalData.sessionId;
+      localStorage.setItem('klaivo_current_session_id', sessionId);
       calibration   = finalData.calibration?.level || 'intermediate';
 
       thinkingWrapper.remove();
@@ -926,7 +1032,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (headerStatus) headerStatus.classList.remove('hidden');
       if (canvasSessionTitle) canvasSessionTitle.textContent = prompt;
 
-      appendMessage('assistant', finalData.diagnosticQuestion);
+      const diagQuestWrapper = appendMessage('assistant', '');
+      await animateTextReveal(
+        diagQuestWrapper.querySelector('.message-bubble') as HTMLElement,
+        finalData.diagnosticQuestion
+      );
 
       if (finalData.nodes && finalData.nodes.length > 0) {
         nodes = finalData.nodes;
@@ -1041,13 +1151,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const chunk = decoder.decode(value, { stream: true });
         streamedContent += chunk;
-        renderMessageBubble(currentMsgWrapper.querySelector('.message-bubble') as HTMLElement, streamedContent);
-        chatHistory.scrollTop = chatHistory.scrollHeight;
       }
 
       if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
 
-      // Append interactive Task Challenge launcher card ONLY AFTER explanation text stream fully finishes
+      // Progressive typewriter reveal animation for explanation text
+      await animateTextReveal(
+        currentMsgWrapper.querySelector('.message-bubble') as HTMLElement,
+        streamedContent,
+        requestId,
+        node.id
+      );
+
+      if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
+
+      // Append interactive Task Challenge launcher card ONLY AFTER explanation typewriter reveal finishes
       appendTaskLauncherCard(node);
 
     } catch (err) {
@@ -1197,7 +1315,13 @@ document.addEventListener('DOMContentLoaded', () => {
           const data = await response.json();
           thinkingWrapper.remove();
           const replyText = data.feedback || data.response || data.content || 'Response received.';
-          appendMessage('assistant', replyText, activeNodeId);
+          const replyWrapper = appendMessage('assistant', '', activeNodeId);
+          await animateTextReveal(
+            replyWrapper.querySelector('.message-bubble') as HTMLElement,
+            replyText,
+            currentNodeOpenRequestId,
+            activeNodeId
+          );
 
           if (data.nodesUpdated && data.nodes) {
             nodes = data.nodes;
@@ -1217,9 +1341,15 @@ document.addEventListener('DOMContentLoaded', () => {
             const { done, value } = await reader.read();
             if (done) break;
             streamedContent += decoder.decode(value, { stream: true });
-            renderMessageBubble(thinkingWrapper.querySelector('.message-bubble') as HTMLElement, streamedContent);
-            chatHistory.scrollTop = chatHistory.scrollHeight;
           }
+          thinkingWrapper.remove();
+          const streamReplyWrapper = appendMessage('assistant', '', activeNodeId);
+          await animateTextReveal(
+            streamReplyWrapper.querySelector('.message-bubble') as HTMLElement,
+            streamedContent,
+            currentNodeOpenRequestId,
+            activeNodeId
+          );
         }
 
       } else {
@@ -1256,7 +1386,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!finalData) throw new Error('Diagnosis stream ended unexpectedly.');
 
         thinkingWrapper.remove();
-        appendMessage('assistant', finalData.response);
+        const diagReplyWrapper = appendMessage('assistant', '');
+        await animateTextReveal(
+          diagReplyWrapper.querySelector('.message-bubble') as HTMLElement,
+          finalData.response
+        );
 
         if (finalData.title) {
           if (canvasSessionTitle) canvasSessionTitle.textContent = finalData.title;
