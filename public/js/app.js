@@ -8414,6 +8414,7 @@
   document.addEventListener("DOMContentLoaded", () => {
     let sessionId = null;
     let activeNodeId = null;
+    let currentNodeOpenRequestId = 0;
     let calibration = "Beginner";
     let nodes = [];
     let selectedFiles = [];
@@ -8501,6 +8502,7 @@
     });
     navNewSessionBtn?.addEventListener("click", resetToWelcomeScreen);
     function resetToWelcomeScreen() {
+      currentNodeOpenRequestId++;
       sessionId = null;
       activeNodeId = null;
       nodes = [];
@@ -8775,7 +8777,13 @@ This will clear chat history for this concept node so you can re-learn it from s
         if (nodeId) {
           const targetNode = nodes.find((n) => String(n.id) === String(nodeId));
           if (targetNode) {
+            const requestId = ++currentNodeOpenRequestId;
             activeNodeId = targetNode.id;
+            if (targetNode.status !== "completed") {
+              targetNode.status = "in_progress";
+            }
+            await fetch(`/api/sessions/${sessId}/nodes/${targetNode.id}/open`, { method: "POST" }).catch(() => {
+            });
             if (sidebarNodeTitle) sidebarNodeTitle.textContent = toSentenceCase(targetNode.title);
             if (sidebarNodeStatus) {
               sidebarNodeStatus.textContent = targetNode.status.toUpperCase();
@@ -8786,9 +8794,14 @@ This will clear chat history for this concept node so you can re-learn it from s
             document.getElementById(`node-group-${targetNode.id}`)?.classList.add("active");
             chatHistory.innerHTML = "";
             const chatRes = await fetch(`/api/sessions/${sessId}/nodes/${targetNode.id}/chat`);
+            if (requestId !== currentNodeOpenRequestId || activeNodeId !== targetNode.id) return;
             if (chatRes.ok) {
               const historyMsgs = await chatRes.json();
+              if (requestId !== currentNodeOpenRequestId || activeNodeId !== targetNode.id) return;
               historyMsgs.forEach((msg) => appendMessage(msg.sender, msg.content, targetNode.id));
+              if (historyMsgs.some((m) => m.sender === "assistant")) {
+                appendTaskLauncherCard(targetNode);
+              }
             }
           }
         } else {
@@ -8984,7 +8997,7 @@ This will clear chat history for this concept node so you can re-learn it from s
       chatHistory.scrollTop = chatHistory.scrollHeight;
       return wrapper;
     }
-    welcomeFileInput.addEventListener("change", (e) => {
+    welcomeFileInput?.addEventListener("change", (e) => {
       const files = Array.from(e.target.files || []);
       files.forEach((file) => {
         if (selectedFiles.some((f) => f.name === file.name)) return;
@@ -8992,11 +9005,11 @@ This will clear chat history for this concept node so you can re-learn it from s
         const tag = document.createElement("div");
         tag.className = "uploaded-file-tag";
         tag.innerHTML = `\u{1F4C4} ${file.name.substring(0, 20)}${file.name.length > 20 ? "\u2026" : ""} <span class="remove-file-btn" data-name="${file.name}">\xD7</span>`;
-        welcomeFilesList.appendChild(tag);
+        if (welcomeFilesList) welcomeFilesList.appendChild(tag);
       });
-      welcomeFileInput.value = "";
+      if (welcomeFileInput) welcomeFileInput.value = "";
     });
-    welcomeFilesList.addEventListener("click", (e) => {
+    welcomeFilesList?.addEventListener("click", (e) => {
       const target = e.target;
       if (target.classList.contains("remove-file-btn")) {
         selectedFiles = selectedFiles.filter((f) => f.name !== target.dataset.name);
@@ -9006,7 +9019,7 @@ This will clear chat history for this concept node so you can re-learn it from s
     suggestionChips.forEach((chip) => {
       chip.addEventListener("click", () => {
         const prompt2 = chip.dataset.prompt || chip.getAttribute("data-prompt") || chip.textContent?.trim() || "";
-        if (prompt2) {
+        if (prompt2 && welcomeInput) {
           welcomeInput.value = prompt2;
           welcomeInput.style.height = "auto";
           welcomeInput.style.height = `${Math.min(welcomeInput.scrollHeight, 160)}px`;
@@ -9014,7 +9027,7 @@ This will clear chat history for this concept node so you can re-learn it from s
         }
       });
     });
-    welcomeInput.addEventListener("keydown", (e) => {
+    welcomeInput?.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         startSession();
@@ -9078,8 +9091,9 @@ This will clear chat history for this concept node so you can re-learn it from s
         }
       }
     }
-    welcomeSendBtn.addEventListener("click", startSession);
+    welcomeSendBtn?.addEventListener("click", startSession);
     async function startSession() {
+      currentNodeOpenRequestId++;
       const prompt2 = welcomeInput.value.trim();
       if (!prompt2) {
         welcomeInput.focus();
@@ -9144,7 +9158,7 @@ This will clear chat history for this concept node so you can re-learn it from s
         appendMessage("assistant", `Something went wrong starting your session: ${err.message}`);
       }
     }
-    onboardingFileInput.addEventListener("change", (e) => {
+    onboardingFileInput?.addEventListener("change", (e) => {
       const files = Array.from(e.target.files || []);
       files.forEach((file) => {
         if (selectedFiles.some((f) => f.name === file.name)) return;
@@ -9152,11 +9166,11 @@ This will clear chat history for this concept node so you can re-learn it from s
         const tag = document.createElement("div");
         tag.className = "uploaded-file-tag";
         tag.innerHTML = `\u{1F4C4} ${file.name.substring(0, 20)}${file.name.length > 20 ? "\u2026" : ""} <span class="remove-file-btn" data-name="${file.name}">\xD7</span>`;
-        onboardingFilesList.appendChild(tag);
+        if (onboardingFilesList) onboardingFilesList.appendChild(tag);
       });
-      onboardingFileInput.value = "";
+      if (onboardingFileInput) onboardingFileInput.value = "";
     });
-    onboardingFilesList.addEventListener("click", (e) => {
+    onboardingFilesList?.addEventListener("click", (e) => {
       const target = e.target;
       if (target.classList.contains("remove-file-btn")) {
         selectedFiles = selectedFiles.filter((f) => f.name !== target.dataset.name);
@@ -9164,13 +9178,16 @@ This will clear chat history for this concept node so you can re-learn it from s
       }
     });
     canvas.onNodeClick(async (node) => {
+      const requestId = ++currentNodeOpenRequestId;
       document.querySelectorAll(".svg-node-group").forEach((el) => el.classList.remove("active"));
       document.getElementById(`node-group-${node.id}`)?.classList.add("active");
       activeNodeId = node.id;
-      node.status = "in_progress";
-      fetch(`/api/sessions/${sessionId}/nodes/${node.id}/open`, { method: "POST" }).catch(() => {
+      if (node.status !== "completed") {
+        node.status = "in_progress";
+      }
+      await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/open`, { method: "POST" }).catch(() => {
       });
-      loadNavigationHistory();
+      await loadNavigationHistory();
       if (sidebarNodeTitle) sidebarNodeTitle.textContent = node.title;
       if (sidebarNodeStatus) {
         sidebarNodeStatus.textContent = "IN_PROGRESS";
@@ -9181,16 +9198,22 @@ This will clear chat history for this concept node so you can re-learn it from s
       const thinkingWrapper = appendMessage("assistant", '<div class="thinking-dots"><span></span><span></span><span></span></div>', node.id);
       try {
         const chatResponse = await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/chat`);
+        if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
         if (chatResponse.ok) {
           const history = await chatResponse.json();
+          if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
           if (history.length > 0) {
             thinkingWrapper.remove();
             history.forEach((msg) => appendMessage(msg.sender, msg.content, node.id));
+            if (history.some((m) => m.sender === "assistant")) {
+              appendTaskLauncherCard(node);
+            }
             return;
           }
         }
         const streamUrl = `/api/sessions/${sessionId}/nodes/${node.id}/teach`;
         const response = await fetch(streamUrl);
+        if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
         if (!response.ok) throw new Error("Teaching agent failed");
         const reader = response.body?.getReader();
         if (!reader) throw new Error("Response body reader not available");
@@ -9200,19 +9223,35 @@ This will clear chat history for this concept node so you can re-learn it from s
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) {
+            try {
+              reader.cancel();
+            } catch (_) {
+            }
+            return;
+          }
           const chunk = decoder.decode(value, { stream: true });
           streamedContent += chunk;
           renderMessageBubble(currentMsgWrapper.querySelector(".message-bubble"), streamedContent);
           chatHistory.scrollTop = chatHistory.scrollHeight;
         }
+        if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
         appendTaskLauncherCard(node);
       } catch (err) {
+        if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
         console.error(err);
         thinkingWrapper.remove();
         appendMessage("assistant", "Failed to load learning content. Please try clicking the node again.");
       }
     });
     function appendTaskLauncherCard(node) {
+      const existingCards = chatHistory.querySelectorAll(".task-launcher-card");
+      existingCards.forEach((card) => {
+        const wrapper = card.closest(".message-wrapper");
+        if (wrapper && wrapper.dataset.nodeId === node.id) {
+          wrapper.remove();
+        }
+      });
       const launcherWrapper = document.createElement("div");
       launcherWrapper.className = "message-wrapper assistant";
       launcherWrapper.dataset.nodeId = node.id;
@@ -9264,14 +9303,15 @@ This will clear chat history for this concept node so you can re-learn it from s
         }
       });
     }
-    exitNodeBtn.addEventListener("click", () => {
+    exitNodeBtn?.addEventListener("click", () => {
+      currentNodeOpenRequestId++;
       activeNodeId = null;
-      sidebarNodeTitle.textContent = "Learning Session";
+      if (sidebarNodeTitle) sidebarNodeTitle.textContent = "Learning Session";
       if (sidebarNodeStatus) {
         sidebarNodeStatus.textContent = "DIAGNOSIS";
       }
-      exitNodeBtn.style.display = "none";
-      chatHistory.innerHTML = "";
+      if (exitNodeBtn) exitNodeBtn.style.display = "none";
+      if (chatHistory) chatHistory.innerHTML = "";
       loadGlobalChat();
     });
     async function loadGlobalChat() {
@@ -9289,41 +9329,47 @@ This will clear chat history for this concept node so you can re-learn it from s
         console.error("Error reloading global chat:", err);
       }
     }
-    sendChatBtn.addEventListener("click", sendMessage);
-    chatInput.addEventListener("keydown", (e) => {
+    sendChatBtn?.addEventListener("click", sendMessage);
+    chatInput?.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         sendMessage();
       }
     });
     async function sendMessage() {
-      const text = chatInput.value.trim();
+      const text = chatInput ? chatInput.value.trim() : "";
       if (!text) return;
-      chatInput.value = "";
-      chatInput.style.height = "auto";
+      if (chatInput) {
+        chatInput.value = "";
+        chatInput.style.height = "auto";
+      }
       appendMessage("user", text, activeNodeId);
       const thinkingWrapper = appendMessage("assistant", '<div class="thinking-dots"><span></span><span></span><span></span></div>', activeNodeId);
       try {
         if (activeNodeId) {
+          if (!sessionId) throw new Error("Session ID is missing");
           const response = await fetch(`/api/sessions/${sessionId}/nodes/${activeNodeId}/message`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ answer: text, text, content: text })
+            body: JSON.stringify({ answer: text, text, content: text, message: text })
           });
-          if (!response.ok) throw new Error("Failed to send message");
+          if (!response.ok) {
+            const errBody = await response.json().catch(() => ({}));
+            throw new Error(errBody.error || errBody.message || "Failed to send node message");
+          }
           const contentType = response.headers.get("content-type");
           if (contentType && contentType.includes("application/json")) {
             const data = await response.json();
             thinkingWrapper.remove();
             const replyText = data.feedback || data.response || data.content || "Response received.";
             appendMessage("assistant", replyText, activeNodeId);
-            if (data.nodesUpdated) {
+            if (data.nodesUpdated && data.nodes) {
               nodes = data.nodes;
               canvas.render(nodes);
               updateStats();
             }
-            if (data.calibration) {
-              calibration = data.calibration.level;
+            if (data.calibration && headerCalibration) {
+              calibration = data.calibration.level || data.calibration;
               headerCalibration.textContent = calibration;
             }
           } else {

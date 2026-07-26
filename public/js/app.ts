@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // --- State ---
   let sessionId: string | null = null;
   let activeNodeId: string | null = null;
+  let currentNodeOpenRequestId: number = 0;
   let calibration: string = 'Beginner';
   let nodes: CurriculumNode[] = [];
   let selectedFiles: File[] = [];
@@ -135,6 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
   navNewSessionBtn?.addEventListener('click', resetToWelcomeScreen);
 
   function resetToWelcomeScreen(): void {
+    currentNodeOpenRequestId++;
     sessionId = null;
     activeNodeId = null;
     nodes = [];
@@ -460,7 +462,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (nodeId) {
         const targetNode = nodes.find(n => String(n.id) === String(nodeId));
         if (targetNode) {
+          const requestId = ++currentNodeOpenRequestId;
           activeNodeId = targetNode.id;
+          if (targetNode.status !== 'completed') {
+            targetNode.status = 'in_progress';
+          }
+          await fetch(`/api/sessions/${sessId}/nodes/${targetNode.id}/open`, { method: 'POST' }).catch(() => {});
           if (sidebarNodeTitle) sidebarNodeTitle.textContent = toSentenceCase(targetNode.title);
           if (sidebarNodeStatus) {
             sidebarNodeStatus.textContent = targetNode.status.toUpperCase();
@@ -473,9 +480,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
           chatHistory.innerHTML = '';
           const chatRes = await fetch(`/api/sessions/${sessId}/nodes/${targetNode.id}/chat`);
+          if (requestId !== currentNodeOpenRequestId || activeNodeId !== targetNode.id) return;
+
           if (chatRes.ok) {
             const historyMsgs: Message[] = await chatRes.json();
+            if (requestId !== currentNodeOpenRequestId || activeNodeId !== targetNode.id) return;
+
             historyMsgs.forEach(msg => appendMessage(msg.sender, msg.content, targetNode.id));
+            if (historyMsgs.some(m => m.sender === 'assistant')) {
+              appendTaskLauncherCard(targetNode);
+            }
           }
         }
       } else {
@@ -741,7 +755,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ══════════════════════════════════════════════════
 
   // File attach on welcome screen
-  welcomeFileInput.addEventListener('change', (e: Event) => {
+  welcomeFileInput?.addEventListener('change', (e: Event) => {
     const files = Array.from((e.target as HTMLInputElement).files || []);
     files.forEach(file => {
       if (selectedFiles.some(f => f.name === file.name)) return;
@@ -749,12 +763,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const tag = document.createElement('div');
       tag.className = 'uploaded-file-tag';
       tag.innerHTML = `📄 ${file.name.substring(0, 20)}${file.name.length > 20 ? '…' : ''} <span class="remove-file-btn" data-name="${file.name}">×</span>`;
-      welcomeFilesList.appendChild(tag);
+      if (welcomeFilesList) welcomeFilesList.appendChild(tag);
     });
-    welcomeFileInput.value = '';
+    if (welcomeFileInput) welcomeFileInput.value = '';
   });
 
-  welcomeFilesList.addEventListener('click', (e: Event) => {
+  welcomeFilesList?.addEventListener('click', (e: Event) => {
     const target = e.target as HTMLElement;
     if (target.classList.contains('remove-file-btn')) {
       selectedFiles = selectedFiles.filter(f => f.name !== target.dataset.name);
@@ -766,7 +780,7 @@ document.addEventListener('DOMContentLoaded', () => {
   suggestionChips.forEach(chip => {
     chip.addEventListener('click', () => {
       const prompt = chip.dataset.prompt || chip.getAttribute('data-prompt') || chip.textContent?.trim() || '';
-      if (prompt) {
+      if (prompt && welcomeInput) {
         welcomeInput.value = prompt;
         welcomeInput.style.height = 'auto';
         welcomeInput.style.height = `${Math.min(welcomeInput.scrollHeight, 160)}px`;
@@ -776,7 +790,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Enter key on welcome input (Shift+Enter inserts newline)
-  welcomeInput.addEventListener('keydown', (e: KeyboardEvent) => {
+  welcomeInput?.addEventListener('keydown', (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       startSession();
@@ -853,9 +867,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  welcomeSendBtn.addEventListener('click', startSession);
+  welcomeSendBtn?.addEventListener('click', startSession);
 
   async function startSession(): Promise<void> {
+    currentNodeOpenRequestId++;
     const prompt = welcomeInput.value.trim();
     if (!prompt) { welcomeInput.focus(); return; }
 
@@ -939,7 +954,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ══════════════════════════════════════════════════
   // STAGE 2/3 — Chat sidebar: file attach
   // ══════════════════════════════════════════════════
-  onboardingFileInput.addEventListener('change', (e: Event) => {
+  onboardingFileInput?.addEventListener('change', (e: Event) => {
     const files = Array.from((e.target as HTMLInputElement).files || []);
     files.forEach(file => {
       if (selectedFiles.some(f => f.name === file.name)) return;
@@ -947,12 +962,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const tag = document.createElement('div');
       tag.className = 'uploaded-file-tag';
       tag.innerHTML = `📄 ${file.name.substring(0, 20)}${file.name.length > 20 ? '…' : ''} <span class="remove-file-btn" data-name="${file.name}">×</span>`;
-      onboardingFilesList.appendChild(tag);
+      if (onboardingFilesList) onboardingFilesList.appendChild(tag);
     });
-    onboardingFileInput.value = '';
+    if (onboardingFileInput) onboardingFileInput.value = '';
   });
 
-  onboardingFilesList.addEventListener('click', (e: Event) => {
+  onboardingFilesList?.addEventListener('click', (e: Event) => {
     const target = e.target as HTMLElement;
     if (target.classList.contains('remove-file-btn')) {
       selectedFiles = selectedFiles.filter(f => f.name !== target.dataset.name);
@@ -965,13 +980,17 @@ document.addEventListener('DOMContentLoaded', () => {
   // Node canvas click → open teaching thread & task challenges
   // ══════════════════════════════════════════════════
   canvas.onNodeClick(async (node) => {
+    const requestId = ++currentNodeOpenRequestId;
+
     document.querySelectorAll('.svg-node-group').forEach(el => el.classList.remove('active'));
     document.getElementById(`node-group-${node.id}`)?.classList.add('active');
 
     activeNodeId = node.id;
-    node.status = 'in_progress';
-    fetch(`/api/sessions/${sessionId}/nodes/${node.id}/open`, { method: 'POST' }).catch(() => {});
-    loadNavigationHistory();
+    if (node.status !== 'completed') {
+      node.status = 'in_progress';
+    }
+    await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/open`, { method: 'POST' }).catch(() => {});
+    await loadNavigationHistory();
 
     if (sidebarNodeTitle) sidebarNodeTitle.textContent = node.title;
     if (sidebarNodeStatus) {
@@ -985,17 +1004,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       const chatResponse = await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/chat`);
+      if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
+
       if (chatResponse.ok) {
         const history: Message[] = await chatResponse.json();
+        if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
+
         if (history.length > 0) {
           thinkingWrapper.remove();
           history.forEach(msg => appendMessage(msg.sender, msg.content, node.id));
+          if (history.some(m => m.sender === 'assistant')) {
+            appendTaskLauncherCard(node);
+          }
           return;
         }
       }
 
       const streamUrl = `/api/sessions/${sessionId}/nodes/${node.id}/teach`;
       const response = await fetch(streamUrl);
+      if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
       if (!response.ok) throw new Error('Teaching agent failed');
 
       const reader = response.body?.getReader();
@@ -1008,16 +1035,23 @@ document.addEventListener('DOMContentLoaded', () => {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) {
+          try { reader.cancel(); } catch (_) {}
+          return;
+        }
         const chunk = decoder.decode(value, { stream: true });
         streamedContent += chunk;
         renderMessageBubble(currentMsgWrapper.querySelector('.message-bubble') as HTMLElement, streamedContent);
         chatHistory.scrollTop = chatHistory.scrollHeight;
       }
 
-      // Append interactive Task Challenge launcher card
+      if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
+
+      // Append interactive Task Challenge launcher card ONLY AFTER explanation text stream fully finishes
       appendTaskLauncherCard(node);
 
     } catch (err) {
+      if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
       console.error(err);
       thinkingWrapper.remove();
       appendMessage('assistant', 'Failed to load learning content. Please try clicking the node again.');
@@ -1025,6 +1059,15 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   function appendTaskLauncherCard(node: CurriculumNode): void {
+    // Deduplication check: remove any existing challenge card for this node before appending a new one
+    const existingCards = chatHistory.querySelectorAll('.task-launcher-card');
+    existingCards.forEach(card => {
+      const wrapper = card.closest('.message-wrapper');
+      if (wrapper && (wrapper as HTMLElement).dataset.nodeId === node.id) {
+        wrapper.remove();
+      }
+    });
+
     const launcherWrapper = document.createElement('div');
     launcherWrapper.className = 'message-wrapper assistant';
     launcherWrapper.dataset.nodeId = node.id;
@@ -1081,14 +1124,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  exitNodeBtn.addEventListener('click', () => {
+  exitNodeBtn?.addEventListener('click', () => {
+    currentNodeOpenRequestId++;
     activeNodeId = null;
-    sidebarNodeTitle.textContent = 'Learning Session';
+    if (sidebarNodeTitle) sidebarNodeTitle.textContent = 'Learning Session';
     if (sidebarNodeStatus) {
       sidebarNodeStatus.textContent = 'DIAGNOSIS';
     }
-    exitNodeBtn.style.display = 'none';
-    chatHistory.innerHTML = '';
+    if (exitNodeBtn) exitNodeBtn.style.display = 'none';
+    if (chatHistory) chatHistory.innerHTML = '';
     loadGlobalChat();
   });
 
@@ -1112,8 +1156,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // ══════════════════════════════════════════════════
   // Send message in discovery / node context
   // ══════════════════════════════════════════════════
-  sendChatBtn.addEventListener('click', sendMessage);
-  chatInput.addEventListener('keydown', (e: KeyboardEvent) => {
+  sendChatBtn?.addEventListener('click', sendMessage);
+  chatInput?.addEventListener('keydown', (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -1121,23 +1165,31 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   async function sendMessage(): Promise<void> {
-    const text = chatInput.value.trim();
+    const text = chatInput ? chatInput.value.trim() : '';
     if (!text) return;
 
-    chatInput.value = '';
-    chatInput.style.height = 'auto';
+    if (chatInput) {
+      chatInput.value = '';
+      chatInput.style.height = 'auto';
+    }
+
     appendMessage('user', text, activeNodeId);
     const thinkingWrapper = appendMessage('assistant', '<div class="thinking-dots"><span></span><span></span><span></span></div>', activeNodeId);
 
     try {
       if (activeNodeId) {
+        if (!sessionId) throw new Error('Session ID is missing');
+
         // ── Node teaching context ──
         const response = await fetch(`/api/sessions/${sessionId}/nodes/${activeNodeId}/message`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ answer: text, text: text, content: text })
+          body: JSON.stringify({ answer: text, text: text, content: text, message: text })
         });
-        if (!response.ok) throw new Error('Failed to send message');
+        if (!response.ok) {
+          const errBody = await response.json().catch(() => ({}));
+          throw new Error(errBody.error || errBody.message || 'Failed to send node message');
+        }
 
         const contentType = response.headers.get('content-type');
 
@@ -1147,13 +1199,13 @@ document.addEventListener('DOMContentLoaded', () => {
           const replyText = data.feedback || data.response || data.content || 'Response received.';
           appendMessage('assistant', replyText, activeNodeId);
 
-          if (data.nodesUpdated) {
+          if (data.nodesUpdated && data.nodes) {
             nodes = data.nodes;
             canvas.render(nodes);
             updateStats();
           }
-          if (data.calibration) {
-            calibration = data.calibration.level;
+          if (data.calibration && headerCalibration) {
+            calibration = data.calibration.level || data.calibration;
             headerCalibration.textContent = calibration;
           }
         } else {

@@ -794,11 +794,28 @@ header.app-header {
 
 .welcome-send-btn,
 .send-btn,
-
+.sidebar-send-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--text-primary, #ffffff);
+  color: #0f1011;
+  border: none;
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+  transition: all 0.15s ease;
+}
 
 .welcome-send-btn:hover,
 .send-btn:hover,
-
+.sidebar-send-btn:hover {
+  background: rgba(255, 255, 255, 0.85);
+  transform: scale(1.04);
+}
 
 .welcome-send-btn:active,
 .send-btn:active,
