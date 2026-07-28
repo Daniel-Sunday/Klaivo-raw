@@ -23,17 +23,27 @@ const projectRoot = fs.existsSync(path.join(__dirname, 'public'))
   ? __dirname
   : path.join(__dirname, '..');
 
-const uploadsDir = path.join(projectRoot, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+const uploadsDir = process.env.VERCEL ? '/tmp/uploads' : path.join(projectRoot, 'uploads');
+try {
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+} catch (err: any) {
+  console.warn('[server] Unable to create uploads directory:', err.message);
 }
 
 (async () => {
-  await db.initDb();
+  try {
+    await db.initDb();
+  } catch (err: any) {
+    console.warn('[server] initDb warning:', err.message);
+  }
 })();
 
 const app = express();
 const port = process.env.PORT || 3005;
+
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -1187,6 +1197,11 @@ app.use((err: any, req: Request, res: Response, next: any) => {
   });
 });
 
-app.listen(port, () => {
-  console.log(`Klaivo Express backend running on http://localhost:${port}`);
-});
+export default app;
+
+if (!process.env.VERCEL) {
+  app.listen(port, () => {
+    console.log(`Klaivo Express backend running on http://localhost:${port}`);
+  });
+}
+
