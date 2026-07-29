@@ -293,7 +293,7 @@ Learner vocabulary level: ${learnerState.vocabularyLevel || 'intermediate'}`;
           },
           mockOverrides?.skeleton
         ),
-        15000,
+        25000, // 25s robust timeout to allow full 8-15 node generation
         onProgress
       );
       skeleton = drafterResult.output;
@@ -301,11 +301,8 @@ Learner vocabulary level: ${learnerState.vocabularyLevel || 'intermediate'}`;
         onProgress({ agent: 'CurriculumDrafter', status: 'done', thought: 'Draft curriculum generated.', payload: { skeleton } });
       }
     } catch (drafterErr: any) {
-      skeleton = createStarterSkeleton(learnerState.currentGoal, learnerState.learnerId);
-      isFallback = true;
-      if (onProgress) {
-        onProgress({ agent: 'CurriculumDrafter', status: 'error', thought: 'Drafting timeout — generated minimal starter skeleton.', payload: { skeleton } });
-      }
+      console.error('[Orchestrator] CurriculumDrafter failed:', drafterErr);
+      throw new Error(`Curriculum generation failed: ${drafterErr?.message || 'AI timeout'}. Please try again to generate your custom learning path.`);
     }
 
     // Step 4: Curriculum Verifier (Non-blocking fallback)
