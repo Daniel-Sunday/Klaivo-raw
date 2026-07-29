@@ -4,28 +4,48 @@ import { CurriculumNode, RoutingClassification, RoutingAgentOutput } from '../ty
 type NodeTemplate = Omit<CurriculumNode, 'session_id'>;
 
 /**
- * Routing Agent
- * Classifies if a user message is a follow-up question or an assessment answer.
+ * Ruflo-Supercharged Fast-Path Swarm Router
+ * Classifies if a user message is a follow-up question or an assessment answer hypothesis.
  */
 export async function classifyMessageIntent(node: NodeTemplate, content: string): Promise<RoutingClassification> {
   const systemInstruction = `
-    You are a message router for Klaivo, an adaptive learning app.
-    The user is studying the concept node: "${node.title}" (${node.description}).
+    You are Klaivo's Ruflo Fast-Path Swarm Router.
+    The user is currently interacting with concept node: "${node.title}" (${node.description}).
     
-    Classify whether the user's message is:
-    1. "question": A follow-up question, request for clarification, asking for help, expressing confusion ("I don't understand", "what do you mean?"), or asking for another explanation.
-    2. "answer": An attempt to answer or explain the assessment question/problem posed for this node (including tentative answers like "Is it because...", "I think...", "It means...").
-    
-    CRITICAL RULE:
-    - Expression of confusion or asking for help/explanation ("I don't understand", "what do you mean", "please explain", "can you clarify", "I'm lost", "what is this") MUST be classified as "question".
-    - Conceptual answers, hypotheses, or explanations—EVEN IF formatted as a question ("Is it because...", "Could it be...", "Because of...", "The answer is...", "Does it form...") MUST be classified as "answer".
-    
-    Return a JSON object matching this schema:
+    CLASSIFICATION TARGETS:
+    1. "question": Expressing confusion, asking for help/clarification, asking for code examples, requesting simpler terms, or saying "I don't get this".
+    2. "answer": Attempting an assessment response, offering a solution hypothesis, answering a prompt, or explaining a mechanism (even if phrased as a question).
+
+    FEW-SHOT CALIBRATION EXAMPLES:
+    - User: "I don't understand how event loop callbacks get pushed to queue." -> "question"
+    - User: "Could you clarify what non-blocking means here?" -> "question"
+    - User: "Is it because callback functions are delegated to libuv worker threads?" -> "answer"
+    - User: "Because the main thread executes sync code before microtask queue runs." -> "answer"
+    - User: "I think the result will be 42 because x was incremented." -> "answer"
+
+    CRITICAL DISAMBIGUATION RULE:
+    - If user asks for explanation or expresses difficulty -> MUST BE "question".
+    - If user proposes a technical mechanism, hypothesis, or solution to the concept challenge -> MUST BE "answer".
+
+    Return JSON:
     {
       "classification": "question" | "answer",
-      "reason": "brief reason for classification"
+      "reason": "brief rationale"
     }
   `;
+
+  // Deterministic fast-path regex check before LLM call to save latency when obvious
+  const lowerText = content.trim().toLowerCase();
+  const explicitQuestionPhrases = [
+    'dont understand', "don't understand", 'do not understand',
+    'what do you mean', 'what does that mean', 'please explain', 'can you clarify',
+    'help me', 'im confused', "i'm confused", 'im lost', "i'm lost",
+    'give me an example', 'show me code', 'can you rephrase'
+  ];
+
+  if (explicitQuestionPhrases.some((phrase) => lowerText.includes(phrase))) {
+    return 'question';
+  }
 
   try {
     const provider = getModelProvider();
@@ -35,16 +55,11 @@ export async function classifyMessageIntent(node: NodeTemplate, content: string)
     );
     return data.classification || 'answer';
   } catch (err) {
-    console.error('[RoutingAgent] Classification error:', err);
-    // Fallback classification logic
-    const text = content.toLowerCase();
-    const confusionPhrases = [
-      'dont understand', "don't understand", 'do not understand',
-      'what do you mean', 'what does that mean', 'explain', 'clarify',
-      'help', 'confused', 'im lost', "i'm lost", 'what is', 'how does'
-    ];
-    if (confusionPhrases.some((phrase) => text.includes(phrase))) {
-      return 'question';
+    console.error('[RoutingAgent] Classification error, using fast-path fallback:', err);
+    // Enhanced fast-path fallback logic
+    const answerIndicators = ['because', 'i think', 'it is', 'result is', 'is it', 'due to', 'value of'];
+    if (answerIndicators.some((kw) => lowerText.includes(kw))) {
+      return 'answer';
     }
     return 'answer';
   }

@@ -208,3 +208,23 @@ function getFallbackCurriculum(goal: string): NodeTemplate[] {
     }
   ];
 }
+
+import { runCurriculumDrafter, CurriculumDrafterInput } from './curriculumDrafter';
+import { runCurriculumVerifier } from './curriculumVerifier';
+import { TreeSkeleton } from '../schemas';
+
+/**
+ * Supercharged Curriculum Orchestrator
+ * Coordinates Ruflo-style Drafting, Verifying, and Milestone Chunk Assignment.
+ */
+export async function generateSuperchargedCurriculum(input: CurriculumDrafterInput): Promise<TreeSkeleton> {
+  // Step 1: Draft with Milestone Chunking
+  const draftResult = await runCurriculumDrafter(input);
+
+  // Step 2: Fact-check & Verify Consensus
+  const verifierResult = await runCurriculumVerifier({
+    skeleton: draftResult.output,
+  });
+
+  return verifierResult.output;
+}

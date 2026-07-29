@@ -33,19 +33,32 @@ export async function runDiagnosisAgent(
     blockedOverwrites: [],
   };
 
-  const systemInstruction = `You are Klaivo's Instant Academic Advisor & Intake Agent.
-Your primary job is to extract structured intake slots and IMMEDIATELY enable curriculum tree creation.
+  const systemInstruction = `You are Klaivo's Ruflo-Supercharged Academic Advisor & Unified Intake Agent.
+Your primary job is to extract structured intake slots, classify global session intent, and IMMEDIATELY enable curriculum tree creation in a single pass.
 
 INSTANT TREE GENERATION POLICY:
 - If "targetSubject" is present or identifiable in the user's input or conversation history (e.g. "WAEC Chemistry", "Build an LLM from scratch", "Python", "Rust"), set "needsMoreContext": false IMMEDIATELY!
 - Do NOT ask optional questions about prior knowledge, time availability, or learning style if "targetSubject" is known. Generate the curriculum map right away!
 - Set "needsMoreContext": true ONLY if the user's goal statement is completely empty or ambiguous (e.g., "help me learn something").
 
-SLOT KEYS TO EXTRACT:
-- "targetSubject": The topic/domain (e.g. "Rust Backend Engineering", "Linear Algebra", "AWS Architect", "LLM from scratch", "WAEC Chemistry")
-- "targetLevelOrOutcome": Target proficiency/objective (e.g. "production microservices", "pass exam", "build working prototype")
+UNIFIED INTENT CLASSIFICATION (Single Pass):
+Classify user intent into one of: "learning_goal", "exam_preparation", "quick_answer", "problem_solving", "project_building", "research".
+- If specific exam/test named -> "exam_preparation"
+- If factual query with no learning path -> "quick_answer"
+- Otherwise default -> "learning_goal"
+
+SLOT KEYS & CANONICAL NORMALIZATION:
+- "targetSubject": The primary topic (e.g., "Rust Backend Engineering", "WAEC Chemistry", "LLM Architecture")
+- "targetLevelOrOutcome": Target proficiency/objective (e.g., "production microservices", "pass exam", "master concepts")
 - "priorKnowledge": Baseline background (optional fallback)
 - "practicalFocus": Specific subtopics/tools (optional fallback)
+
+For each proposed slot, include:
+- "value": extracted text string
+- "canonicalValue": cleaned/normalized title (e.g. "React.js" -> "React")
+- "confidence": confidence score between 0.0 and 1.0
+- "isCorrection": boolean indicating if learner is correcting a previous value
+- "reasoning": brief explanation
 
 FORCE PROCEED RULE:
 - Set "userRequestsProceed": true if the user asks to stop questions, proceed immediately, skip diagnosis, or build the tree now (e.g. "stop asking", "proceed", "build tree", "skip").
@@ -54,16 +67,25 @@ Output MUST be valid JSON matching this schema:
 {
   "needsMoreContext": boolean,
   "userRequestsProceed": boolean,
+  "intent": string,
   "clarifyingQuestion": string (optional or null),
   "proposedSlots": {
     "<slotKey>": {
       "value": string,
+      "canonicalValue": string,
+      "confidence": number,
       "isCorrection": boolean,
       "reasoning": string
     }
   },
   "unfilledSlotKeys": string[],
-  "reasoning": string
+  "reasoning": string,
+  "currentGoal": {
+    "rawStatement": string,
+    "domain": string,
+    "specificObjective": string,
+    "contextArtifacts": string[]
+  }
 }`;
 
   const blockedContext = slotState.blockedOverwrites.length > 0
@@ -78,13 +100,13 @@ ${slotState.blockedOverwrites.map((b) => `- Slot "${b.slotKey}": Attempted "${b.
   const userPrompt = `Learner ID: ${input.learnerId}
 Latest User Input: "${input.rawGoalStatement}"
 ${historyContext}
-Intent Classification: ${input.intentClassification}
+Intent Classification: ${input.intentClassification || 'unspecified'}
 Current Resolved Slots: ${JSON.stringify(slotState.slotsResolved)}
 Current Diagnosis Round: ${slotState.roundCount + 1} / 1
 Blocked Overwrites History: ${blockedContext}
 Context Artifacts: ${input.contextArtifacts?.join(', ') || 'None'}`;
 
-  return await executeAgent<DiagnosisAgentInput, DiagnosisAgentOutput>({
+  const result = await executeAgent<DiagnosisAgentInput, DiagnosisAgentOutput>({
     agentName: 'DiagnosisAgent',
     learnerId: input.learnerId,
     systemInstruction,
@@ -100,9 +122,27 @@ Context Artifacts: ${input.contextArtifacts?.join(', ') || 'None'}`;
           proposedSlots: mockOutput.proposedSlots || {},
           unfilledSlotKeys: mockOutput.unfilledSlotKeys || [],
           reasoning: mockOutput.reasoning || 'Mock diagnosis execution',
+          intent: mockOutput.intent || 'learning_goal',
+          currentGoal: mockOutput.currentGoal || {
+            rawStatement: input.rawGoalStatement,
+            domain: 'General',
+            specificObjective: 'Master core concepts',
+            contextArtifacts: input.contextArtifacts || [],
+          },
         })
       : undefined,
   });
+
+  // Canonical normalization post-processing guard
+  if (result.output.proposedSlots) {
+    for (const [key, slot] of Object.entries(result.output.proposedSlots)) {
+      if (slot && !slot.canonicalValue) {
+        slot.canonicalValue = slot.value.trim();
+      }
+    }
+  }
+
+  return result;
 }
 
 // --- Legacy API Adapters ---

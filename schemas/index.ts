@@ -84,6 +84,10 @@ export const TreeNodeSchema = z.object({
   content: NodeContentSchema.nullable().optional().default(null),
   masteryScore: z.number().min(0.0).max(1.0).optional().default(0.0),
   depth: z.number().int().min(0).optional().default(0),
+  phaseIndex: z.number().int().min(0).optional(),
+  chunkId: z.string().optional(),
+  isCurrentActiveChunk: z.boolean().optional(),
+  estimatedTimeMinutes: z.number().optional(),
 });
 export type TreeNode = z.infer<typeof TreeNodeSchema>;
 
@@ -207,6 +211,8 @@ export const ProposedSlotEntrySchema = z.object({
   value: z.string().min(1, "slot value cannot be empty"),
   isCorrection: z.boolean().default(false),
   reasoning: z.string().optional(),
+  confidence: z.number().min(0.0).max(1.0).optional(),
+  canonicalValue: z.string().optional(),
 });
 export type ProposedSlotEntry = z.infer<typeof ProposedSlotEntrySchema>;
 
