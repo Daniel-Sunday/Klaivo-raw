@@ -561,23 +561,28 @@ export class ConceptCanvas {
     }
     group.appendChild(iconGroup);
 
-    // 6. Sequence Order Badge Pill
+    // 6. Sequence Order & Phase Milestone Badge Pill
     const badgeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    badgeGroup.setAttribute('transform', `translate(${node.x + 68}, ${node.y + 18})`);
+    badgeGroup.setAttribute('transform', `translate(${node.x + 68}, ${node.y + 16})`);
     
     const badgeBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    badgeBg.setAttribute('width', '48');
-    badgeBg.setAttribute('height', '15');
+    const phaseStr = node.phaseIndex !== undefined ? `P${node.phaseIndex}` : `N${node.order_index + 1}`;
+    const activeStr = node.isCurrentActiveChunk ? ' • FOCUS' : '';
+    const fullBadgeText = `${phaseStr}${activeStr}`;
+    const badgeWidth = Math.max(54, fullBadgeText.length * 6 + 10);
+
+    badgeBg.setAttribute('width', String(badgeWidth));
+    badgeBg.setAttribute('height', '16');
     badgeBg.setAttribute('rx', '5');
-    badgeBg.setAttribute('class', `svg-node-badge-bg ${node.status}`);
+    badgeBg.setAttribute('class', `svg-node-badge-bg ${node.status}${node.isCurrentActiveChunk ? ' active-chunk' : ''}`);
     badgeGroup.appendChild(badgeBg);
 
     const badgeText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    badgeText.setAttribute('x', '24');
-    badgeText.setAttribute('y', '11');
+    badgeText.setAttribute('x', String(badgeWidth / 2));
+    badgeText.setAttribute('y', '12');
     badgeText.setAttribute('text-anchor', 'middle');
     badgeText.setAttribute('class', 'svg-node-badge-text');
-    badgeText.textContent = `NODE ${node.order_index + 1}`;
+    badgeText.textContent = fullBadgeText;
     badgeGroup.appendChild(badgeText);
 
     group.appendChild(badgeGroup);
@@ -638,11 +643,14 @@ export class ConceptCanvas {
   private showHoverTooltip(node: CurriculumNode, e: MouseEvent): void {
     this.hideHoverTooltip();
 
+    const phaseLabel = node.phaseIndex !== undefined ? `Phase ${node.phaseIndex}` : `Node ${node.order_index + 1}`;
+    const activeLabel = node.isCurrentActiveChunk ? ' • Active Focus' : '';
+
     const tooltip = document.createElement('div');
     tooltip.className = 'canvas-hover-tooltip';
     tooltip.innerHTML = `
       <div class="tooltip-badge">
-        <span>NODE ${node.order_index + 1}</span> • <span style="text-transform:uppercase">${node.status}</span>
+        <span>${phaseLabel}${activeLabel}</span> • <span style="text-transform:uppercase">${node.status}</span>
       </div>
       <div class="tooltip-title">${node.title}</div>
       <div class="tooltip-desc">${node.description || 'Core concept in this learning path.'}</div>

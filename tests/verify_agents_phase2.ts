@@ -1,6 +1,6 @@
 import { runIntentAgent } from '../agents/intentAgent';
 import { runDiagnosisAgent } from '../agents/diagnosisAgent';
-import { runCurriculumDrafter } from '../agents/curriculumDrafter';
+import { runCurriculumDrafter, verifyCurriculumStructure } from '../agents/curriculumDrafter';
 import { runCurriculumVerifier } from '../agents/curriculumVerifier';
 import { runTeachingAgent } from '../agents/teachingAgent';
 import { runAssessmentAgent } from '../agents/assessmentAgent';
@@ -118,6 +118,21 @@ async function runPhase2UnitTests() {
       drafterResult.output.verificationStatus === "unverified" &&
         drafterResult.output.nodes[0].goalRelevance.length > 10,
       "2.3 Curriculum Drafter - Generates unverified skeleton with non-empty goalRelevance per node"
+    );
+
+    // ----------------------------------------------------
+    // 2.3b Structural Verifier Unit Tests
+    // ----------------------------------------------------
+    const linearNodes: TreeNode[] = [
+      { id: "n1", title: "A", oneLineSummary: "s", goalRelevance: "rel", prerequisiteIds: [], status: "available", content: null, masteryScore: 0, depth: 0 },
+      { id: "n2", title: "B", oneLineSummary: "s", goalRelevance: "rel", prerequisiteIds: ["n1"], status: "locked", content: null, masteryScore: 0, depth: 1 },
+      { id: "n3", title: "C", oneLineSummary: "s", goalRelevance: "rel", prerequisiteIds: ["n2"], status: "locked", content: null, masteryScore: 0, depth: 2 },
+      { id: "n4", title: "D", oneLineSummary: "s", goalRelevance: "rel", prerequisiteIds: ["n3"], status: "locked", content: null, masteryScore: 0, depth: 3 },
+    ];
+    const linearVerification = verifyCurriculumStructure(linearNodes);
+    assert(
+      !linearVerification.valid && linearVerification.errors.some((e: string) => e.includes("linear chain")),
+      "2.3b Structural Verifier - Rejects linear chains and flags lack of branching/convergence"
     );
 
     // ----------------------------------------------------

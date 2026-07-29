@@ -35,7 +35,9 @@ export type IntakeWorkflowResult =
   | { status: 'needs_clarification'; question: string; intentOutput: IntentAgentOutput; slotState?: DiagnosisSlotState }
   | { status: 'light_response'; intent: string; response: string; slotState?: DiagnosisSlotState }
   | { status: 'needs_more_context'; question: string; diagnosisOutput: DiagnosisAgentOutput; slotState: DiagnosisSlotState }
-  | { status: 'tree_created'; tree: TreeSkeleton; learnerState: LearnerState; slotState: DiagnosisSlotState; isFallback?: boolean };
+  | { status: 'tree_created'; tree: TreeSkeleton; learnerState: LearnerState; slotState: DiagnosisSlotState; isFallback?: boolean }
+  | { status: 'retry_needed'; message: string; slotState: DiagnosisSlotState }
+  | { status: 'generation_failed'; message: string; slotState?: DiagnosisSlotState };
 
 export type AssessmentWorkflowResult =
   | { status: 'assessment_success'; assessmentResult: AssessmentResult; updatedState: LearnerState; tree: TreeSkeleton }
@@ -148,100 +150,114 @@ export class KlaivoOrchestrator {
     // Step 1: Intent Agent
     let intent: string;
 
-    if (currentSlotState.lockedIntent) {
-      intent = currentSlotState.lockedIntent;
-      console.log(`[Orchestrator] Using locked intent: ${intent} (skipping re-classification)`);
-    } else {
-      if (onProgress) {
-        onProgress({ agent: 'IntentAgent', status: 'started', thought: 'Classifying learning intent...' });
+    let diagnosisResult: any;
+
+    try {
+      if (currentSlotState.lockedIntent) {
+        intent = currentSlotState.lockedIntent;
+        console.log(`[Orchestrator] Using locked intent: ${intent} (skipping re-classification)`);
+      } else {
+        if (onProgress) {
+          onProgress({ agent: 'IntentAgent', status: 'started', thought: 'Classifying learning intent...' });
+        }
+
+        const intentResult = await runStageWithTimeoutAndRetry(
+          'IntentAgent',
+          () => runIntentAgent({ rawMessage: userMessage, learnerState }, mockOverrides?.intent),
+          15000,
+          onProgress
+        );
+
+        console.log(
+          `[Orchestrator] Fresh intent classification: ${intentResult.output.intent} ` +
+          `(confidence: ${intentResult.output.confidence})`
+        );
+
+        if (onProgress) {
+          onProgress({ agent: 'IntentAgent', status: 'done', thought: `Intent classified: ${intentResult.output.intent}` });
+        }
+
+        // Guardrail 1: Intent Confidence Gate (first turn only)
+        if (intentResult.output.confidence < 0.6 || intentResult.output.needsClarification) {
+          console.log('[Orchestrator] Confidence gate tripped — returning needs_clarification');
+          return {
+            status: 'needs_clarification',
+            question: sanitizeUserErrorMessage('IntentAgent', 'Low confidence'),
+            intentOutput: intentResult.output,
+            slotState: currentSlotState,
+          };
+        }
+
+        intent = intentResult.output.intent;
+
+        // Guardrail 2: Short-Circuit Non-Tree Intents (first turn only)
+        if (intent === 'quick_answer' || intent === 'problem_solving' || intent === 'research') {
+          let lightResponseText: string;
+          try {
+            const provider = getModelProvider();
+            const systemInstruction = `You are Klaivo's AI tutor assisting a learner with a direct request (Intent: ${intent}).
+  Provide a direct, thorough, clear, and helpful explanation answering their question or solving their problem directly without building a curriculum tree.
+  Use Markdown formatting for structure.`;
+            const userPrompt = `Learner message: "${userMessage}"
+  Learner vocabulary level: ${learnerState.vocabularyLevel || 'intermediate'}`;
+            lightResponseText = await provider.generateText(userPrompt, systemInstruction);
+          } catch (err: any) {
+            console.error(`[Orchestrator] Direct ${intent} response LLM generation failed:`, err);
+            lightResponseText = "Sorry, I couldn't generate a response — try asking again.";
+          }
+
+          return {
+            status: 'light_response',
+            intent,
+            response: lightResponseText,
+            slotState: currentSlotState,
+          };
+        }
+
+        // Lock it in so subsequent turns skip re-classification entirely.
+        currentSlotState.lockedIntent = intent;
+        console.log(`[Orchestrator] Locking intent for session: ${intent}`);
       }
 
-      const intentResult = await runStageWithTimeoutAndRetry(
-        'IntentAgent',
-        () => runIntentAgent({ rawMessage: userMessage, learnerState }, mockOverrides?.intent),
+      const conversationHistory = learnerState.chatHistory && learnerState.chatHistory.length > 0
+        ? learnerState.chatHistory.map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+        : [userMessage];
+
+      // Step 2: Diagnosis Agent with explicit Slot State Context & Full Conversation Memory
+      if (onProgress) {
+        onProgress({ agent: 'DiagnosisAgent', status: 'started', thought: 'Analyzing learner context & goals...' });
+      }
+
+      diagnosisResult = await runStageWithTimeoutAndRetry(
+        'DiagnosisAgent',
+        () => runDiagnosisAgent(
+          {
+            learnerId: learnerState.learnerId,
+            rawGoalStatement: userMessage,
+            conversationHistory,
+            currentSlotState,
+            contextArtifacts,
+            intentClassification: intent,
+          },
+          mockOverrides?.diagnosis
+        ),
         15000,
         onProgress
       );
 
-      console.log(
-        `[Orchestrator] Fresh intent classification: ${intentResult.output.intent} ` +
-        `(confidence: ${intentResult.output.confidence})`
-      );
-
       if (onProgress) {
-        onProgress({ agent: 'IntentAgent', status: 'done', thought: `Intent classified: ${intentResult.output.intent}` });
+        onProgress({ agent: 'DiagnosisAgent', status: 'done', thought: 'Synthesized learning goal objective.' });
       }
-
-      // Guardrail 1: Intent Confidence Gate (first turn only)
-      if (intentResult.output.confidence < 0.6 || intentResult.output.needsClarification) {
-        console.log('[Orchestrator] Confidence gate tripped — returning needs_clarification');
-        return {
-          status: 'needs_clarification',
-          question: sanitizeUserErrorMessage('IntentAgent', 'Low confidence'),
-          intentOutput: intentResult.output,
-          slotState: currentSlotState,
-        };
+    } catch (intakeErr: any) {
+      console.error('[Orchestrator] Intake Agent failed:', intakeErr);
+      if (onProgress) {
+        onProgress({ agent: 'DiagnosisAgent', status: 'error', thought: 'Curriculum generation failed due to model unavailability.' });
       }
-
-      intent = intentResult.output.intent;
-
-      // Guardrail 2: Short-Circuit Non-Tree Intents (first turn only)
-      if (intent === 'quick_answer' || intent === 'problem_solving' || intent === 'research') {
-        let lightResponseText: string;
-        try {
-          const provider = getModelProvider();
-          const systemInstruction = `You are Klaivo's AI tutor assisting a learner with a direct request (Intent: ${intent}).
-Provide a direct, thorough, clear, and helpful explanation answering their question or solving their problem directly without building a curriculum tree.
-Use Markdown formatting for structure.`;
-          const userPrompt = `Learner message: "${userMessage}"
-Learner vocabulary level: ${learnerState.vocabularyLevel || 'intermediate'}`;
-          lightResponseText = await provider.generateText(userPrompt, systemInstruction);
-        } catch (err: any) {
-          console.error(`[Orchestrator] Direct ${intent} response LLM generation failed:`, err);
-          lightResponseText = "Sorry, I couldn't generate a response — try asking again.";
-        }
-
-        return {
-          status: 'light_response',
-          intent,
-          response: lightResponseText,
-          slotState: currentSlotState,
-        };
-      }
-
-      // Lock it in so subsequent turns skip re-classification entirely.
-      currentSlotState.lockedIntent = intent;
-      console.log(`[Orchestrator] Locking intent for session: ${intent}`);
-    }
-
-    const conversationHistory = learnerState.chatHistory && learnerState.chatHistory.length > 0
-      ? learnerState.chatHistory.map((m) => `${m.role.toUpperCase()}: ${m.content}`)
-      : [userMessage];
-
-    // Step 2: Diagnosis Agent with explicit Slot State Context & Full Conversation Memory
-    if (onProgress) {
-      onProgress({ agent: 'DiagnosisAgent', status: 'started', thought: 'Analyzing learner context & goals...' });
-    }
-
-    const diagnosisResult = await runStageWithTimeoutAndRetry(
-      'DiagnosisAgent',
-      () => runDiagnosisAgent(
-        {
-          learnerId: learnerState.learnerId,
-          rawGoalStatement: userMessage,
-          conversationHistory,
-          currentSlotState,
-          contextArtifacts,
-          intentClassification: intent,
-        },
-        mockOverrides?.diagnosis
-      ),
-      15000,
-      onProgress
-    );
-
-    if (onProgress) {
-      onProgress({ agent: 'DiagnosisAgent', status: 'done', thought: 'Synthesized learning goal objective.' });
+      return {
+        status: 'generation_failed',
+        message: 'Curriculum generation is temporarily unavailable — please try again shortly.',
+        slotState: currentSlotState,
+      };
     }
 
     // Step 2b: Code-side Slot Filling Validation, Overwrite Protection, & Hard Cap
@@ -250,7 +266,8 @@ Learner vocabulary level: ${learnerState.vocabularyLevel || 'intermediate'}`;
       diagnosisResult.output.proposedSlots || {},
       diagnosisResult.output.userRequestsProceed || false,
       diagnosisResult.output.needsMoreContext ?? false,
-      diagnosisResult.output.clarifyingQuestion
+      diagnosisResult.output.clarifyingQuestion,
+      userMessage
     );
 
     // Guardrail 3: Diagnosis Needs-More-Context Gate (unless 3 rounds or force proceed met)
@@ -302,10 +319,17 @@ Learner vocabulary level: ${learnerState.vocabularyLevel || 'intermediate'}`;
       }
     } catch (drafterErr: any) {
       console.error('[Orchestrator] CurriculumDrafter failed:', drafterErr);
-      throw new Error(`Curriculum generation failed: ${drafterErr?.message || 'AI timeout'}. Please try again to generate your custom learning path.`);
+      if (onProgress) {
+        onProgress({ agent: 'CurriculumDrafter', status: 'error', thought: 'Curriculum generation failed.' });
+      }
+      return {
+        status: 'generation_failed',
+        message: 'Curriculum generation is temporarily unavailable — please try again shortly.',
+        slotState: currentSlotState,
+      };
     }
 
-    // Step 4: Curriculum Verifier (Non-blocking fallback)
+    // Step 4: Curriculum Verifier (Hard failure on verifier rejection/failure)
     if (onProgress) {
       onProgress({ agent: 'CurriculumVerifier', status: 'started', thought: 'Verifying curriculum against domain rubrics...' });
     }
@@ -318,15 +342,22 @@ Learner vocabulary level: ${learnerState.vocabularyLevel || 'intermediate'}`;
         onProgress
       );
       skeleton = verifierResult.output;
+      if (skeleton.verificationStatus === 'verification_failed') {
+        throw new Error('CurriculumVerifier returned verification_failed status.');
+      }
       if (onProgress) {
         onProgress({ agent: 'CurriculumVerifier', status: 'done', thought: 'Verified curriculum against domain rubrics.', payload: { skeleton } });
       }
     } catch (verifierErr: any) {
-      skeleton.verificationStatus = 'verified_with_gaps';
-      skeleton.verificationNotes.push('Verification skipped due to reference search unavailability.');
+      console.error('[Orchestrator] CurriculumVerifier failed:', verifierErr);
       if (onProgress) {
-        onProgress({ agent: 'CurriculumVerifier', status: 'error', thought: 'Verifier timeout — showing best draft with unverified markers.', payload: { skeleton } });
+        onProgress({ agent: 'CurriculumVerifier', status: 'error', thought: 'Curriculum verification failed — generation stopped.' });
       }
+      return {
+        status: 'generation_failed',
+        message: 'Curriculum generation is temporarily unavailable — please try again shortly.',
+        slotState: currentSlotState,
+      };
     }
 
     slotUpdate.updatedState.treeAlreadyCreated = true;

@@ -538,6 +538,29 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
       });
     }
 
+    if (intakeResult.status === 'generation_failed' || intakeResult.status === 'retry_needed') {
+      const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
+      await db.createSession(sessionId, sessionTitle, 'learning', 'generation_failed', calibration, userId);
+      if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
+      await db.createMessage(sessionId, null, 'user', initial_prompt);
+      await db.createMessage(sessionId, null, 'assistant', intakeResult.message);
+
+      return res.status(503).json({
+        sessionId,
+        title: sessionTitle,
+        intent: 'learning',
+        calibration,
+        diagnosticQuestion: intakeResult.message,
+        status: 'generation_failed',
+        error: intakeResult.message,
+        response: intakeResult.message,
+      });
+    }
+
+    if (intakeResult.status !== 'tree_created') {
+      return res.status(500).json({ error: 'Unexpected intake result status' });
+    }
+
     // Status: tree_created -> Convert tree skeleton to UI nodes and save to DB
     const skeleton = intakeResult.tree;
     const formattedNodes = mapTreeSkeletonToCurriculumNodes(sessionId, skeleton);
@@ -707,6 +730,18 @@ ${historyText ? `Recent Conversation:\n${historyText}` : ''}`;
     const diagGoal = intakeResult.status === 'tree_created' ? intakeResult.tree.goalSummary : undefined;
     const updatedTitle = generateSessionTitle(session.title || text, diagSubj, diagGoal);
     await db.updateSessionTitle(sessionId, updatedTitle);
+
+    if (intakeResult.status === 'generation_failed' || intakeResult.status === 'retry_needed') {
+      await db.updateSessionStatus(sessionId, 'generation_failed');
+      const errMsg = intakeResult.message || 'Curriculum generation is temporarily unavailable — please try again shortly.';
+      await db.createMessage(sessionId, null, 'assistant', errMsg);
+      return res.status(503).json({
+        status: 'generation_failed',
+        title: updatedTitle,
+        error: errMsg,
+        response: errMsg,
+      });
+    }
 
     if (intakeResult.status === 'tree_created') {
       const formattedNodes = mapTreeSkeletonToCurriculumNodes(sessionId, intakeResult.tree);

@@ -18,7 +18,7 @@ export function createStarterSkeleton(currentGoal: LearnerGoal, learnerId: strin
   const nodes: TreeNode[] = [
     {
       id: "node_starter_1",
-      title: `${topic}: Core Syntax & Mental Model`,
+      title: `${topic} - Prerequisite Foundations & Syntax`,
       oneLineSummary: `Essential prerequisite concepts and setup for ${topic}`,
       goalRelevance: `Establishes fundamental building blocks required for ${topic}`,
       prerequisiteIds: [],
@@ -33,7 +33,7 @@ export function createStarterSkeleton(currentGoal: LearnerGoal, learnerId: strin
     },
     {
       id: "node_starter_2",
-      title: `${topic}: Internal Mechanics & Data Structures`,
+      title: `${topic} - Internal Mechanics & Data Flow`,
       oneLineSummary: `Core execution patterns, memory model, and key mechanisms`,
       goalRelevance: `Underpins reliable execution when building with ${topic}`,
       prerequisiteIds: ["node_starter_1"],
@@ -48,7 +48,7 @@ export function createStarterSkeleton(currentGoal: LearnerGoal, learnerId: strin
     },
     {
       id: "node_starter_3",
-      title: `${topic}: Practical Control Flow & API Pipeline`,
+      title: `${topic} - Practical Implementation & Pipelines`,
       oneLineSummary: "Hands-on workflow implementation and integration patterns",
       goalRelevance: `Enables functional implementation towards ${topic}`,
       prerequisiteIds: ["node_starter_2"],
@@ -63,7 +63,7 @@ export function createStarterSkeleton(currentGoal: LearnerGoal, learnerId: strin
     },
     {
       id: "node_starter_4",
-      title: `${topic}: Error Handling & Edge Cases`,
+      title: `${topic} - Error Diagnostics & Fault Tolerance`,
       oneLineSummary: "Diagnostic techniques, fault tolerance, and edge case handling",
       goalRelevance: `Ensures robust, bug-free execution in ${topic}`,
       prerequisiteIds: ["node_starter_3"],
@@ -78,7 +78,7 @@ export function createStarterSkeleton(currentGoal: LearnerGoal, learnerId: strin
     },
     {
       id: "node_starter_5",
-      title: `${topic}: Performance & State Optimization`,
+      title: `${topic} - Performance & Memory Optimization`,
       oneLineSummary: "Optimization patterns, resource management, and scaling",
       goalRelevance: `Drives production efficiency for ${topic}`,
       prerequisiteIds: ["node_starter_4"],
@@ -93,7 +93,7 @@ export function createStarterSkeleton(currentGoal: LearnerGoal, learnerId: strin
     },
     {
       id: "node_starter_6",
-      title: `${topic}: Production Deployment & Capstone Integration`,
+      title: `${topic} - Capstone Project & Deployment`,
       oneLineSummary: "Real-world project synthesis, deployment, and validation",
       goalRelevance: `Finalizes complete practical mastery of ${topic}`,
       prerequisiteIds: ["node_starter_5"],

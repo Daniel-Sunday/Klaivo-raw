@@ -8159,19 +8159,23 @@
       }
       group.appendChild(iconGroup);
       const badgeGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      badgeGroup.setAttribute("transform", `translate(${node.x + 68}, ${node.y + 18})`);
+      badgeGroup.setAttribute("transform", `translate(${node.x + 68}, ${node.y + 16})`);
       const badgeBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      badgeBg.setAttribute("width", "48");
-      badgeBg.setAttribute("height", "15");
+      const phaseStr = node.phaseIndex !== void 0 ? `P${node.phaseIndex}` : `N${node.order_index + 1}`;
+      const activeStr = node.isCurrentActiveChunk ? " \u2022 FOCUS" : "";
+      const fullBadgeText = `${phaseStr}${activeStr}`;
+      const badgeWidth = Math.max(54, fullBadgeText.length * 6 + 10);
+      badgeBg.setAttribute("width", String(badgeWidth));
+      badgeBg.setAttribute("height", "16");
       badgeBg.setAttribute("rx", "5");
-      badgeBg.setAttribute("class", `svg-node-badge-bg ${node.status}`);
+      badgeBg.setAttribute("class", `svg-node-badge-bg ${node.status}${node.isCurrentActiveChunk ? " active-chunk" : ""}`);
       badgeGroup.appendChild(badgeBg);
       const badgeText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      badgeText.setAttribute("x", "24");
-      badgeText.setAttribute("y", "11");
+      badgeText.setAttribute("x", String(badgeWidth / 2));
+      badgeText.setAttribute("y", "12");
       badgeText.setAttribute("text-anchor", "middle");
       badgeText.setAttribute("class", "svg-node-badge-text");
-      badgeText.textContent = `NODE ${node.order_index + 1}`;
+      badgeText.textContent = fullBadgeText;
       badgeGroup.appendChild(badgeText);
       group.appendChild(badgeGroup);
       const titleText = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -8216,11 +8220,13 @@
     /** Display sleek dark glassmorphic tooltip with full node details */
     showHoverTooltip(node, e) {
       this.hideHoverTooltip();
+      const phaseLabel = node.phaseIndex !== void 0 ? `Phase ${node.phaseIndex}` : `Node ${node.order_index + 1}`;
+      const activeLabel = node.isCurrentActiveChunk ? " \u2022 Active Focus" : "";
       const tooltip = document.createElement("div");
       tooltip.className = "canvas-hover-tooltip";
       tooltip.innerHTML = `
       <div class="tooltip-badge">
-        <span>NODE ${node.order_index + 1}</span> \u2022 <span style="text-transform:uppercase">${node.status}</span>
+        <span>${phaseLabel}${activeLabel}</span> \u2022 <span style="text-transform:uppercase">${node.status}</span>
       </div>
       <div class="tooltip-title">${node.title}</div>
       <div class="tooltip-desc">${node.description || "Core concept in this learning path."}</div>
@@ -9626,7 +9632,10 @@ This will clear chat history for this concept node so you can re-learn it from s
           diagQuestWrapper.querySelector(".message-bubble"),
           finalData.diagnosticQuestion
         );
-        if (finalData.nodes && finalData.nodes.length > 0) {
+        if (finalData.status === "generation_failed") {
+          canvas.showThinkingError("CurriculumVerifier", finalData.error || "Curriculum generation temporarily unavailable");
+          appendMessage("assistant", `\u26A0\uFE0F **Generation Delayed**: ${finalData.response || finalData.error || "Curriculum generation is temporarily unavailable \u2014 please try again shortly."}`);
+        } else if (finalData.nodes && finalData.nodes.length > 0) {
           nodes = finalData.nodes;
           canvas.render(nodes, true);
           updateStats();
@@ -9926,7 +9935,10 @@ This will clear chat history for this concept node so you can re-learn it from s
             if (canvasSessionTitle) canvasSessionTitle.textContent = finalData.title;
             loadNavigationHistory();
           }
-          if (finalData.status === "learning" || finalData.nodes && finalData.nodes.length > 0) {
+          if (finalData.status === "generation_failed") {
+            canvas.showThinkingError("CurriculumVerifier", finalData.error || "Curriculum generation temporarily unavailable");
+            appendMessage("assistant", `\u26A0\uFE0F **Generation Delayed**: ${finalData.response || finalData.error || "Curriculum generation is temporarily unavailable \u2014 please try again shortly."}`);
+          } else if (finalData.status === "learning" || finalData.nodes && finalData.nodes.length > 0) {
             nodes = finalData.nodes;
             canvas.render(nodes, true);
             updateStats();

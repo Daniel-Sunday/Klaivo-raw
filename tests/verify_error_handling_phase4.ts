@@ -39,12 +39,12 @@ async function runPhase4ErrorHandlingTests() {
 
   try {
     // ----------------------------------------------------
-    // Path 1: Malformed Input / Fallback Starter Skeleton
+    // Path 1: Transparent Error State & Starter Skeleton
     // ----------------------------------------------------
     const starterSkeleton = createStarterSkeleton(baseLearnerState.currentGoal, baseLearnerState.learnerId);
     assert(
-      starterSkeleton.nodes.length >= 3 && starterSkeleton.verificationStatus === "unverified",
-      "1. Fallback Starter Skeleton - Generates minimal 3-5 orientation node skeleton on Drafter exhaustion"
+      starterSkeleton.nodes.length >= 6 && starterSkeleton.verificationStatus === "unverified",
+      "1. Starter Skeleton - Generates structured 6-node domain skeleton on Drafter fallback"
     );
 
     // ----------------------------------------------------

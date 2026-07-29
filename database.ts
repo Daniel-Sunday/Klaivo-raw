@@ -252,7 +252,7 @@ export async function updateSessionTitle(id: string, title: string): Promise<voi
   await updateSession(id, { title });
 }
 
-export async function updateSessionStatus(id: string, status: 'diagnosing' | 'learning'): Promise<void> {
+export async function updateSessionStatus(id: string, status: 'diagnosing' | 'learning' | 'generation_failed'): Promise<void> {
   await updateSession(id, { status });
 }
 

@@ -1038,7 +1038,10 @@ document.addEventListener('DOMContentLoaded', () => {
         finalData.diagnosticQuestion
       );
 
-      if (finalData.nodes && finalData.nodes.length > 0) {
+      if (finalData.status === 'generation_failed') {
+        canvas.showThinkingError('CurriculumVerifier', finalData.error || 'Curriculum generation temporarily unavailable');
+        appendMessage('assistant', `⚠️ **Generation Delayed**: ${finalData.response || finalData.error || 'Curriculum generation is temporarily unavailable — please try again shortly.'}`);
+      } else if (finalData.nodes && finalData.nodes.length > 0) {
         nodes = finalData.nodes;
         canvas.render(nodes, true);
         updateStats();
@@ -1397,7 +1400,10 @@ document.addEventListener('DOMContentLoaded', () => {
           loadNavigationHistory();
         }
 
-        if (finalData.status === 'learning' || (finalData.nodes && finalData.nodes.length > 0)) {
+        if (finalData.status === 'generation_failed') {
+          canvas.showThinkingError('CurriculumVerifier', finalData.error || 'Curriculum generation temporarily unavailable');
+          appendMessage('assistant', `⚠️ **Generation Delayed**: ${finalData.response || finalData.error || 'Curriculum generation is temporarily unavailable — please try again shortly.'}`);
+        } else if (finalData.status === 'learning' || (finalData.nodes && finalData.nodes.length > 0)) {
           nodes = finalData.nodes;
           canvas.render(nodes, true);
           updateStats();

@@ -22,6 +22,18 @@ export interface AgentExecutionOptions<TInput, TOutput> {
   mockFn?: (input: TInput) => Partial<TOutput>;
 }
 
+export class AgentGenerationFailedError extends Error {
+  public readonly agentName: string;
+  public readonly rawError: string;
+
+  constructor(agentName: string, rawError: string) {
+    super(`Agent [${agentName}] failed generation: ${rawError}`);
+    this.name = 'AgentGenerationFailedError';
+    this.agentName = agentName;
+    this.rawError = rawError;
+  }
+}
+
 export interface AgentResult<TOutput> {
   output: TOutput;
   log: AgentLog;
@@ -243,11 +255,10 @@ export async function executeAgent<TInput, TOutput>(
     console.log(systemInstruction);
     console.log(`============================================================\n`);
   }
-
-  const candidateModels = Array.from(new Set([modelName, 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']));
+  const candidateModels = Array.from(new Set([modelName, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-pro'])).filter(Boolean);
   let currentPrompt = userPrompt;
 
-  for (const activeModelName of Array.from(new Set(candidateModels))) {
+  for (const activeModelName of candidateModels) {
     const model = genAI.getGenerativeModel({
       model: activeModelName,
       generationConfig: {
@@ -309,8 +320,8 @@ export async function executeAgent<TInput, TOutput>(
         currentPrompt = `${userPrompt}\n\n[PREVIOUS OUTPUT FAILED VALIDATION]\nYour previous output was invalid:\nError: ${lastError}\nPlease fix these validation errors and return ONLY a valid JSON object matching the exact schema.`;
       } catch (err: any) {
         lastError = err.message;
-        if (err.message?.includes('429') || err.message?.includes('Quota exceeded')) {
-          console.warn(`[${agentName}] Model ${activeModelName} hit 429 quota limit. Switching to next candidate model...`);
+        if (err.message?.includes('429') || err.message?.includes('Quota exceeded') || err.message?.includes('404')) {
+          console.warn(`[${agentName}] Model ${activeModelName} failed (${err.message}). Switching to next candidate model...`);
           break; // Switch to next candidate model
         }
         retryCount++;
@@ -319,33 +330,7 @@ export async function executeAgent<TInput, TOutput>(
     }
   }
 
-  // Fallback to structured output if LLM retries fail
-  const fallbackObj = getFallbackOutput();
-  const parseResult = schema.safeParse(fallbackObj);
-
-  if (parseResult.success) {
-    const log: AgentLog = AgentLogSchema.parse({
-      logId,
-      agentName,
-      learnerId,
-      timestamp: new Date().toISOString(),
-      input: inputData as unknown,
-      output: parseResult.data as unknown,
-      reasoning: `LLM execution error (${lastError}); processed with fallback generator`,
-      validationPassed: true,
-      retryCount: maxRetries,
-    });
-
-    await saveAgentLog(log);
-    const outSummary = (parseResult.data as any)?.intent
-      || (parseResult.data as any)?.currentGoal?.domain
-      || (parseResult.data as any)?.goalSummary
-      || (parseResult.data as any)?.verificationStatus
-      || '';
-    console.log(`✔  [${agentName}] DONE${outSummary ? ` → ${outSummary}` : ''} (LLM-fallback after retries)`);
-    console.log(JSON.stringify(parseResult.data, null, 2));
-    return { output: parseResult.data, log };
-  }
-
-  throw new Error(`Agent [${agentName}] failed after ${maxRetries} retries. Error: ${lastError}`);
+  // Strictly do NOT fabricate content when all candidate models fail
+  console.error(`❌ [${agentName}] All candidate generative models failed. Last error: ${lastError}`);
+  throw new AgentGenerationFailedError(agentName, lastError || 'All candidate generative models failed to respond.');
 }

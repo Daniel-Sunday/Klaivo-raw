@@ -98,7 +98,7 @@ export const TreeEdgeSchema = z.object({
 });
 export type TreeEdge = z.infer<typeof TreeEdgeSchema>;
 
-export const VerificationStatusSchema = z.enum(["unverified", "verified", "verified_with_gaps"]);
+export const VerificationStatusSchema = z.enum(["unverified", "verified", "verified_with_gaps", "verification_failed"]);
 export type VerificationStatus = z.infer<typeof VerificationStatusSchema>;
 
 export const TreeSkeletonSchema = z.object({
@@ -272,7 +272,8 @@ export function processSlotUpdate(
   proposedSlots: Record<string, ProposedSlotEntry>,
   userRequestsProceed: boolean,
   modelNeedsMoreContext: boolean,
-  modelClarifyingQuestion?: string | null
+  modelClarifyingQuestion?: string | null,
+  rawUserMessage?: string
 ): SlotUpdateResult {
   const newRoundCount = currentState.roundCount + 1;
   const newBlockedOverwrites: BlockedOverwriteEntry[] = [];
@@ -302,6 +303,18 @@ export function processSlotUpdate(
 
     if (proposedEntry.value && proposedEntry.value.trim().length > 0) {
       updatedSlotsResolved[key] = proposedEntry.value.trim();
+    }
+  }
+
+  // Code-side Instant Subject Extraction Fallback per Rule 9
+  if (!updatedSlotsResolved.targetSubject && rawUserMessage && rawUserMessage.trim().length > 3) {
+    const cleanedMessage = rawUserMessage.trim();
+    const extractedSubject = cleanedMessage
+      .replace(/^(help me (understand|learn|master)|i want to (learn|master)|prepare me for|teach me|build a|create a)\s+/i, '')
+      .trim();
+    if (extractedSubject.length >= 3) {
+      updatedSlotsResolved.targetSubject = extractedSubject;
+      console.log(`[SlotGuard] Code-side subject fallback extracted targetSubject: "${extractedSubject}"`);
     }
   }
 

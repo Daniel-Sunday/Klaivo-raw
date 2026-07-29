@@ -23,7 +23,7 @@ export interface Session {
   user_id?: string;
   title: string;
   intent: string;
-  status: 'diagnosing' | 'learning';
+  status: 'diagnosing' | 'learning' | 'generation_failed';
   calibration: Calibration;
   slot_state?: DiagnosisSlotState;
   created_at?: string;
