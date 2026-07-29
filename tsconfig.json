@@ -12,7 +12,6 @@
     "rootDir": "./"
   },
   "include": [
-    "api/**/*.ts",
     "server.ts",
     "database.ts",
     "agents/**/*.ts",

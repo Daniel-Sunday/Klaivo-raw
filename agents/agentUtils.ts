@@ -39,7 +39,7 @@ export async function executeAgent<TInput, TOutput>(
     schema,
     temperature = 0.2,
     maxRetries = 3,
-    modelName = 'gemini-3.6-flash',
+    modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash',
     mockFn,
   } = options;
 
@@ -69,8 +69,8 @@ export async function executeAgent<TInput, TOutput>(
       };
     } else if (agentName === 'CurriculumDrafter') {
       const goal = (inputData as any).currentGoal;
-      const domain = goal?.domain || goal?.rawStatement || 'General';
-      const objective = goal?.specificObjective || goal?.rawStatement || 'Goal';
+      const domain = goal?.domain && goal.domain !== 'General' ? goal.domain : (goal?.rawStatement || goal?.specificObjective || 'Learning Topic');
+      const objective = goal?.specificObjective || goal?.rawStatement || domain;
       return {
         treeId: (inputData as any).treeId || `tree_${Date.now()}`,
         learnerId,
@@ -78,9 +78,9 @@ export async function executeAgent<TInput, TOutput>(
         nodes: [
           {
             id: 'node_1',
-            title: `${domain} Foundations & Hybridization`,
-            oneLineSummary: `Core principles, covalent bonding, and structural foundations of ${domain}`,
-            goalRelevance: `Essential foundation required to achieve ${objective}`,
+            title: `${domain}: Core Fundamentals`,
+            oneLineSummary: `Essential concepts, terminology, and setup required for ${objective}`,
+            goalRelevance: `Direct prerequisite foundation needed to master ${objective}`,
             prerequisiteIds: [],
             status: 'available',
             content: null,
@@ -89,9 +89,9 @@ export async function executeAgent<TInput, TOutput>(
           },
           {
             id: 'node_2',
-            title: `${domain} Nomenclature & Rules`,
-            oneLineSummary: `Systematic naming conventions and reaction mechanisms in ${domain}`,
-            goalRelevance: `Core mechanism mastery for ${objective}`,
+            title: `${domain}: Core Mechanics & Architecture`,
+            oneLineSummary: `Key mechanics, rules, and structural patterns governing ${domain}`,
+            goalRelevance: `Mastery of fundamental mechanisms for ${objective}`,
             prerequisiteIds: ['node_1'],
             status: 'locked',
             content: null,
@@ -100,27 +100,48 @@ export async function executeAgent<TInput, TOutput>(
           },
           {
             id: 'node_3',
-            title: `Advanced ${domain} Applications`,
-            oneLineSummary: `Practical application, synthesis, and exam problem solving`,
-            goalRelevance: `Applied target mastery for ${objective}`,
+            title: `${domain}: Applied Workflows & Integration`,
+            oneLineSummary: `Hands-on practical implementation and scenario solving in ${domain}`,
+            goalRelevance: `Practical execution directly targeting ${objective}`,
             prerequisiteIds: ['node_2'],
             status: 'locked',
             content: null,
             masteryScore: 0.0,
             depth: 2,
           },
+          {
+            id: 'node_4',
+            title: `${domain}: Advanced Synthesis & Problem Solving`,
+            oneLineSummary: `Complex edge cases, optimization, and real-world project mastery`,
+            goalRelevance: `Achieving full autonomous competence in ${objective}`,
+            prerequisiteIds: ['node_3'],
+            status: 'locked',
+            content: null,
+            masteryScore: 0.0,
+            depth: 3,
+          },
         ],
-        edges: [],
+        edges: [
+          { from: 'node_1', to: 'node_2' },
+          { from: 'node_2', to: 'node_3' },
+          { from: 'node_3', to: 'node_4' },
+        ],
         verificationStatus: 'unverified',
         verificationNotes: [],
         version: 1,
       };
     } else if (agentName === 'TeachingAgent') {
       const node = (inputData as any).node;
+      const title = node?.title || 'Concept Overview';
+      const summary = node?.oneLineSummary || 'Key principles';
+      const relevance = node?.goalRelevance || 'Core prerequisite for learning goal';
       return {
         nodeId: node?.id || 'node_1',
-        explanation: `Comprehensive overview of ${node?.title || 'topic'}: ${node?.oneLineSummary || 'Key principles'}.`,
-        examples: [`Practical application 1 for ${node?.title || 'topic'}`],
+        explanation: `### Core Concept Breakdown: ${title}\n\n**Goal Relevance:** ${relevance}\n\n**Overview:** ${summary}\n\nTo master **${title}**, we break it down into core principles and practical mechanics. First, understand the underlying structure: every component serves a specific purpose in building domain mastery. Next, focus on how the mechanisms interact in practice. Avoid common traps like skipping foundational setup or misapplying key rules without verifying prerequisites.\n\nBy connecting these concepts together, you build intuition and problem-solving capability.`,
+        examples: [
+          `**Scenario 1:** Applying ${title} in a standard practical workflow to establish base setup.`,
+          `**Scenario 2:** Resolving a real-world edge case by utilizing core principles of ${title}.`
+        ],
         generatedAt: timestamp,
         vocabularyLevelUsed: (inputData as any).vocabularyLevel || 'intermediate',
       };
@@ -160,12 +181,19 @@ export async function executeAgent<TInput, TOutput>(
       };
     } else if (agentName === 'DiagnosisAgent') {
       const raw = (inputData as any).rawGoalStatement || 'Goal';
+      let derivedDomain = 'General Subject';
+      if (raw.toLowerCase().includes('chemistry')) derivedDomain = 'Organic Chemistry';
+      else if (raw.toLowerCase().includes('python')) derivedDomain = 'Python Development';
+      else if (raw.toLowerCase().includes('llm') || raw.toLowerCase().includes('ai')) derivedDomain = 'AI & LLM Engineering';
+      else if (raw.toLowerCase().includes('react') || raw.toLowerCase().includes('web')) derivedDomain = 'Web Development';
+      else if (raw.length > 0) derivedDomain = raw.split(' ').slice(0, 3).join(' ');
+
       return {
         needsMoreContext: false,
         clarifyingQuestion: undefined,
         currentGoal: {
           rawStatement: raw,
-          domain: raw.toLowerCase().includes('chemistry') ? 'Organic Chemistry' : raw.toLowerCase().includes('python') ? 'Python' : 'General Subject',
+          domain: derivedDomain,
           specificObjective: raw,
           contextArtifacts: (inputData as any).contextArtifacts || [],
         },
@@ -216,7 +244,7 @@ export async function executeAgent<TInput, TOutput>(
     console.log(`============================================================\n`);
   }
 
-  const candidateModels = [modelName, 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-2.0-flash-lite'];
+  const candidateModels = Array.from(new Set([modelName, 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']));
   let currentPrompt = userPrompt;
 
   for (const activeModelName of Array.from(new Set(candidateModels))) {

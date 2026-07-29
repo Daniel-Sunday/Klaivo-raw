@@ -302,8 +302,8 @@ export function processSlotUpdate(
   const hasSubject = Boolean(updatedSlotsResolved.targetSubject && updatedSlotsResolved.targetSubject.trim().length > 0);
   const remainingNeeded = ['targetSubject', 'targetLevelOrOutcome'].filter((k) => !updatedSlotsResolved[k]);
 
-  // 2. Instant Tree Generation Policy & 1-Round Hard Cap
-  const maxRoundsReached = newRoundCount >= 1;
+  // 2. Instant Tree Generation Policy & 3-Round Hard Cap
+  const maxRoundsReached = newRoundCount >= 3;
   const shouldFinalize = hasSubject || maxRoundsReached || isForceProceed || !modelNeedsMoreContext;
 
   const finalNeedsMoreContext = !shouldFinalize;

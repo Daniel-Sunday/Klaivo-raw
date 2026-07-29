@@ -4,7 +4,7 @@
   "description": "Klaivo: AI-powered adaptive learning platform MVP",
   "main": "server.js",
   "scripts": {
-    "build": "tsc && npm run build:client",
+    "build": "tsc",
     "start": "node dist/server.js",
     "dev": "tsc && node dist/server.js",
     "build:client": "esbuild public/js/app.ts --bundle --outfile=public/js/app.js --sourcemap",
@@ -25,9 +25,9 @@
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/multer": "^2.2.0",
-    "@types/node": "^22.10.0",
+    "@types/node": "^26.1.1",
     "esbuild": "^0.28.1",
     "ts-node": "^10.9.2",
-    "typescript": "^5.7.3"
+    "typescript": "^7.0.2"
   }
 }

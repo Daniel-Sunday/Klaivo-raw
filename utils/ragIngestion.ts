@@ -56,7 +56,8 @@ export async function processUploadedArtifact(
   };
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
+    const modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+    const model = genAI.getGenerativeModel({ model: modelName });
     const prompt = `Extract structured syllabus and assessment metadata from this uploaded document:
 Filename: "${filename}"
 Document Snippet:

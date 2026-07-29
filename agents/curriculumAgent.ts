@@ -94,13 +94,82 @@ function validateAndLayoutNodes(nodes: any[]): NodeTemplate[] {
 }
 
 function getFallbackCurriculum(goal: string): NodeTemplate[] {
-  console.log('[CurriculumAgent] Loading default WAEC Organic Chemistry syllabus template.');
+  const isChemistry = goal.toLowerCase().includes('chemistry') || goal.toLowerCase().includes('waec');
   
-  const nodes: NodeTemplate[] = [
+  if (isChemistry) {
+    console.log('[CurriculumAgent] Loading WAEC Organic Chemistry syllabus template for chemistry goal.');
+    return [
+      {
+        id: 'node_1',
+        title: 'Intro & Hybridization',
+        description: 'Covalent bonds, sp3/sp2/sp carbon shapes',
+        dependencies: [],
+        x: 100,
+        y: 600,
+        status: 'available',
+        order_index: 0
+      },
+      {
+        id: 'node_2',
+        title: 'IUPAC Nomenclature',
+        description: 'Naming alkanes, alkenes, alkynes & groups',
+        dependencies: ['node_1'],
+        x: 260,
+        y: 480,
+        status: 'locked',
+        order_index: 1
+      },
+      {
+        id: 'node_3',
+        title: 'Hydrocarbon Reactions',
+        description: 'Substitution, addition, and combustion',
+        dependencies: ['node_2'],
+        x: 440,
+        y: 420,
+        status: 'locked',
+        order_index: 2
+      },
+      {
+        id: 'node_4',
+        title: 'Isomerism Concepts',
+        description: 'Structural and stereoisomerism differences',
+        dependencies: ['node_2'],
+        x: 440,
+        y: 280,
+        status: 'locked',
+        order_index: 3
+      },
+      {
+        id: 'node_5',
+        title: 'Alkanols & Esters',
+        description: 'Esterification and properties of alcohols',
+        dependencies: ['node_3', 'node_4'],
+        x: 640,
+        y: 330,
+        status: 'locked',
+        order_index: 4
+      },
+      {
+        id: 'node_6',
+        title: 'Polymers & Synthesis',
+        description: 'Addition & condensation polymerization',
+        dependencies: ['node_5'],
+        x: 820,
+        y: 200,
+        status: 'locked',
+        order_index: 5
+      }
+    ];
+  }
+
+  const topicName = goal.length > 30 ? goal.slice(0, 30) + '...' : goal;
+  console.log(`[CurriculumAgent] Generating dynamic fallback curriculum template for: "${goal}"`);
+
+  return [
     {
       id: 'node_1',
-      title: 'Intro & Hybridization',
-      description: 'Covalent bonds, sp3/sp2/sp carbon shapes',
+      title: `${topicName}: Fundamentals & Core Setup`,
+      description: `Essential foundational concepts and setup required to learn ${topicName}`,
       dependencies: [],
       x: 100,
       y: 600,
@@ -109,8 +178,8 @@ function getFallbackCurriculum(goal: string): NodeTemplate[] {
     },
     {
       id: 'node_2',
-      title: 'IUPAC Nomenclature',
-      description: 'Naming alkanes, alkenes, alkynes & groups',
+      title: `${topicName}: Core Mechanics & Architecture`,
+      description: `Key mechanisms, concepts, and rules for ${topicName}`,
       dependencies: ['node_1'],
       x: 260,
       y: 480,
@@ -119,8 +188,8 @@ function getFallbackCurriculum(goal: string): NodeTemplate[] {
     },
     {
       id: 'node_3',
-      title: 'Hydrocarbon Reactions',
-      description: 'Substitution, addition, and combustion',
+      title: `${topicName}: Applied Workflows & Integration`,
+      description: `Hands-on practical implementation and scenario execution in ${topicName}`,
       dependencies: ['node_2'],
       x: 440,
       y: 420,
@@ -129,35 +198,13 @@ function getFallbackCurriculum(goal: string): NodeTemplate[] {
     },
     {
       id: 'node_4',
-      title: 'Isomerism Concepts',
-      description: 'Structural and stereoisomerism differences',
-      dependencies: ['node_2'],
-      x: 440,
-      y: 280,
-      status: 'locked',
-      order_index: 3
-    },
-    {
-      id: 'node_5',
-      title: 'Alkanols & Esters',
-      description: 'Esterification and properties of alcohols',
-      dependencies: ['node_3', 'node_4'],
+      title: `${topicName}: Advanced Synthesis & Mastery`,
+      description: `Complex edge cases, optimization, and applied project mastery for ${topicName}`,
+      dependencies: ['node_3'],
       x: 640,
       y: 330,
       status: 'locked',
-      order_index: 4
-    },
-    {
-      id: 'node_6',
-      title: 'Polymers & Synthesis',
-      description: 'Addition & condensation polymerization',
-      dependencies: ['node_5'],
-      x: 820,
-      y: 200,
-      status: 'locked',
-      order_index: 5
+      order_index: 3
     }
   ];
-
-  return nodes;
 }
