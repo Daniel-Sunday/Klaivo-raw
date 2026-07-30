@@ -2,6 +2,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { z } from 'zod';
 import { AgentLog, AgentLogSchema } from '../schemas';
 import { saveAgentLog } from '../database';
+import { logger, getTraceContext } from '../utils/logger';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -64,6 +65,13 @@ export async function executeAgent<TInput, TOutput>(
     || (inputData as any)?.currentGoal?.specificObjective
     || (inputData as any)?.node?.title
     || '';
+  logger.info({
+    agent: agentName,
+    learnerId,
+    modelName,
+    inputSummary: inputSummary.slice(0, 80),
+    event: 'agent_start',
+  }, `[${agentName}] STARTING`);
   console.log(`\n${'━'.repeat(60)}`);
   console.log(`▶  [${agentName}] STARTING${inputSummary ? ` — "${inputSummary.slice(0, 80)}"` : ''}`);
   console.log(`${'━'.repeat(60)}`);

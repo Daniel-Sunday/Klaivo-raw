@@ -433,7 +433,25 @@ app.post('/api/sessions/start', upload.array('documents'), async (req: Request, 
       const sessionTitle = generateSessionTitle(initial_prompt, targetSubj, goalSum);
       const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
 
-      if (intakeResult.status === 'tree_created') {
+      if (intakeResult.status === 'generation_failed' || intakeResult.status === 'retry_needed') {
+        const calibration: Calibration = { level: 'intermediate', known_concepts: [], weak_points: [] };
+        await db.createSession(sessionId, sessionTitle, 'learning', 'generation_failed', calibration, userId);
+        if (intakeResult.slotState) await db.updateSessionSlotState(sessionId, intakeResult.slotState);
+        await db.createMessage(sessionId, null, 'user', initial_prompt);
+        const errMsg = intakeResult.message || 'AI service rate limit / API quota exceeded — please wait a moment and try again.';
+        await db.createMessage(sessionId, null, 'assistant', errMsg);
+
+        sendSSE('pipeline_complete', {
+          sessionId,
+          title: sessionTitle,
+          intent: 'learning',
+          calibration,
+          diagnosticQuestion: errMsg,
+          status: 'generation_failed',
+          error: errMsg,
+          response: errMsg,
+        });
+      } else if (intakeResult.status === 'tree_created') {
         const skeleton = intakeResult.tree;
         const formattedNodes = mapTreeSkeletonToCurriculumNodes(sessionId, skeleton);
         await db.createSession(sessionId, sessionTitle, skeleton.goalSummary, 'learning', calibration, userId);
@@ -694,7 +712,18 @@ ${historyText ? `Recent Conversation:\n${historyText}` : ''}`;
       const updatedTitle = generateSessionTitle(session.title || text, diagSubj, diagGoal);
       await db.updateSessionTitle(sessionId, updatedTitle);
 
-      if (intakeResult.status === 'tree_created') {
+      if (intakeResult.status === 'generation_failed' || intakeResult.status === 'retry_needed') {
+        await db.updateSessionStatus(sessionId, 'generation_failed');
+        const errMsg = intakeResult.message || 'AI service rate limit / API quota exceeded — please wait a moment and try again.';
+        await db.createMessage(sessionId, null, 'assistant', errMsg);
+
+        sendSSE('pipeline_complete', {
+          status: 'generation_failed',
+          title: updatedTitle,
+          error: errMsg,
+          response: errMsg,
+        });
+      } else if (intakeResult.status === 'tree_created') {
         const formattedNodes = mapTreeSkeletonToCurriculumNodes(sessionId, intakeResult.tree);
         await db.saveNodes(sessionId, formattedNodes);
         await db.updateSessionStatus(sessionId, 'learning');

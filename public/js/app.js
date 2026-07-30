@@ -9627,15 +9627,20 @@ This will clear chat history for this concept node so you can re-learn it from s
         if (headerCalibration) headerCalibration.textContent = calibration;
         if (headerStatus) headerStatus.classList.remove("hidden");
         if (canvasSessionTitle) canvasSessionTitle.textContent = prompt2;
-        const diagQuestWrapper = appendMessage("assistant", "");
-        await animateTextReveal(
-          diagQuestWrapper.querySelector(".message-bubble"),
-          finalData.diagnosticQuestion
-        );
         if (finalData.status === "generation_failed") {
-          canvas.showThinkingError("CurriculumVerifier", finalData.error || "Curriculum generation temporarily unavailable");
-          appendMessage("assistant", `\u26A0\uFE0F **Generation Delayed**: ${finalData.response || finalData.error || "Curriculum generation is temporarily unavailable \u2014 please try again shortly."}`);
-        } else if (finalData.nodes && finalData.nodes.length > 0) {
+          const errMsg = finalData.error || finalData.response || finalData.diagnosticQuestion || "AI service rate limit / API quota exceeded \u2014 please wait a moment or check your API key and try again.";
+          canvas.showThinkingError("AI Assistant", errMsg);
+          appendMessage("assistant", `\u26A0\uFE0F ${errMsg}`);
+          return;
+        }
+        if (finalData.diagnosticQuestion) {
+          const diagQuestWrapper = appendMessage("assistant", "");
+          await animateTextReveal(
+            diagQuestWrapper.querySelector(".message-bubble"),
+            finalData.diagnosticQuestion
+          );
+        }
+        if (finalData.nodes && finalData.nodes.length > 0) {
           nodes = finalData.nodes;
           canvas.render(nodes, true);
           updateStats();
@@ -9650,8 +9655,10 @@ This will clear chat history for this concept node so you can re-learn it from s
       } catch (err) {
         console.error(err);
         thinkingWrapper.remove();
-        canvas.showThinkingError("Orchestrator", `Session intake error: ${err.message}`);
-        appendMessage("assistant", `Something went wrong starting your session: ${err.message}`);
+        const rawMsg = err.message || "";
+        const cleanMsg = rawMsg.includes("429") || rawMsg.includes("Quota exceeded") || rawMsg.includes("503") ? "AI service rate limit / API quota exceeded \u2014 please wait a moment or check your API key and try again." : `Something went wrong starting your session: ${err.message}`;
+        canvas.showThinkingError("AI Assistant", cleanMsg);
+        appendMessage("assistant", `\u26A0\uFE0F ${cleanMsg}`);
       }
     }
     onboardingFileInput?.addEventListener("change", (e) => {
@@ -9926,19 +9933,24 @@ This will clear chat history for this concept node so you can re-learn it from s
           });
           if (!finalData) throw new Error("Diagnosis stream ended unexpectedly.");
           thinkingWrapper.remove();
-          const diagReplyWrapper = appendMessage("assistant", "");
-          await animateTextReveal(
-            diagReplyWrapper.querySelector(".message-bubble"),
-            finalData.response
-          );
+          if (finalData.status === "generation_failed") {
+            const errMsg = finalData.error || finalData.response || "AI service rate limit / API quota exceeded \u2014 please wait a moment or check your API key and try again.";
+            canvas.showThinkingError("AI Assistant", errMsg);
+            appendMessage("assistant", `\u26A0\uFE0F ${errMsg}`);
+            return;
+          }
+          if (finalData.response) {
+            const diagReplyWrapper = appendMessage("assistant", "");
+            await animateTextReveal(
+              diagReplyWrapper.querySelector(".message-bubble"),
+              finalData.response
+            );
+          }
           if (finalData.title) {
             if (canvasSessionTitle) canvasSessionTitle.textContent = finalData.title;
             loadNavigationHistory();
           }
-          if (finalData.status === "generation_failed") {
-            canvas.showThinkingError("CurriculumVerifier", finalData.error || "Curriculum generation temporarily unavailable");
-            appendMessage("assistant", `\u26A0\uFE0F **Generation Delayed**: ${finalData.response || finalData.error || "Curriculum generation is temporarily unavailable \u2014 please try again shortly."}`);
-          } else if (finalData.status === "learning" || finalData.nodes && finalData.nodes.length > 0) {
+          if (finalData.status === "learning" || finalData.nodes && finalData.nodes.length > 0) {
             nodes = finalData.nodes;
             canvas.render(nodes, true);
             updateStats();
@@ -9951,8 +9963,10 @@ This will clear chat history for this concept node so you can re-learn it from s
       } catch (err) {
         console.error(err);
         thinkingWrapper.remove();
-        canvas.showThinkingError("Orchestrator", `Turn error: ${err.message}`);
-        appendMessage("assistant", `Sorry, something went wrong: ${err.message}`);
+        const rawMsg = err.message || "";
+        const cleanMsg = rawMsg.includes("429") || rawMsg.includes("Quota exceeded") || rawMsg.includes("503") ? "AI service rate limit / API quota exceeded \u2014 please wait a moment or check your API key and try again." : `Sorry, something went wrong: ${err.message}`;
+        canvas.showThinkingError("AI Assistant", cleanMsg);
+        appendMessage("assistant", `\u26A0\uFE0F ${cleanMsg}`);
       }
     }
     function updateStats() {

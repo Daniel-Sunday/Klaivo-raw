@@ -1032,16 +1032,22 @@ document.addEventListener('DOMContentLoaded', () => {
       if (headerStatus) headerStatus.classList.remove('hidden');
       if (canvasSessionTitle) canvasSessionTitle.textContent = prompt;
 
-      const diagQuestWrapper = appendMessage('assistant', '');
-      await animateTextReveal(
-        diagQuestWrapper.querySelector('.message-bubble') as HTMLElement,
-        finalData.diagnosticQuestion
-      );
-
       if (finalData.status === 'generation_failed') {
-        canvas.showThinkingError('CurriculumVerifier', finalData.error || 'Curriculum generation temporarily unavailable');
-        appendMessage('assistant', `⚠️ **Generation Delayed**: ${finalData.response || finalData.error || 'Curriculum generation is temporarily unavailable — please try again shortly.'}`);
-      } else if (finalData.nodes && finalData.nodes.length > 0) {
+        const errMsg = finalData.error || finalData.response || finalData.diagnosticQuestion || 'AI service rate limit / API quota exceeded — please wait a moment or check your API key and try again.';
+        canvas.showThinkingError('AI Assistant', errMsg);
+        appendMessage('assistant', `⚠️ ${errMsg}`);
+        return;
+      }
+
+      if (finalData.diagnosticQuestion) {
+        const diagQuestWrapper = appendMessage('assistant', '');
+        await animateTextReveal(
+          diagQuestWrapper.querySelector('.message-bubble') as HTMLElement,
+          finalData.diagnosticQuestion
+        );
+      }
+
+      if (finalData.nodes && finalData.nodes.length > 0) {
         nodes = finalData.nodes;
         canvas.render(nodes, true);
         updateStats();
@@ -1058,8 +1064,12 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err: any) {
       console.error(err);
       thinkingWrapper.remove();
-      canvas.showThinkingError('Orchestrator', `Session intake error: ${err.message}`);
-      appendMessage('assistant', `Something went wrong starting your session: ${err.message}`);
+      const rawMsg = err.message || '';
+      const cleanMsg = rawMsg.includes('429') || rawMsg.includes('Quota exceeded') || rawMsg.includes('503')
+        ? 'AI service rate limit / API quota exceeded — please wait a moment or check your API key and try again.'
+        : `Something went wrong starting your session: ${err.message}`;
+      canvas.showThinkingError('AI Assistant', cleanMsg);
+      appendMessage('assistant', `⚠️ ${cleanMsg}`);
     }
   }
 
@@ -1389,21 +1399,28 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!finalData) throw new Error('Diagnosis stream ended unexpectedly.');
 
         thinkingWrapper.remove();
-        const diagReplyWrapper = appendMessage('assistant', '');
-        await animateTextReveal(
-          diagReplyWrapper.querySelector('.message-bubble') as HTMLElement,
-          finalData.response
-        );
+
+        if (finalData.status === 'generation_failed') {
+          const errMsg = finalData.error || finalData.response || 'AI service rate limit / API quota exceeded — please wait a moment or check your API key and try again.';
+          canvas.showThinkingError('AI Assistant', errMsg);
+          appendMessage('assistant', `⚠️ ${errMsg}`);
+          return;
+        }
+
+        if (finalData.response) {
+          const diagReplyWrapper = appendMessage('assistant', '');
+          await animateTextReveal(
+            diagReplyWrapper.querySelector('.message-bubble') as HTMLElement,
+            finalData.response
+          );
+        }
 
         if (finalData.title) {
           if (canvasSessionTitle) canvasSessionTitle.textContent = finalData.title;
           loadNavigationHistory();
         }
 
-        if (finalData.status === 'generation_failed') {
-          canvas.showThinkingError('CurriculumVerifier', finalData.error || 'Curriculum generation temporarily unavailable');
-          appendMessage('assistant', `⚠️ **Generation Delayed**: ${finalData.response || finalData.error || 'Curriculum generation is temporarily unavailable — please try again shortly.'}`);
-        } else if (finalData.status === 'learning' || (finalData.nodes && finalData.nodes.length > 0)) {
+        if (finalData.status === 'learning' || (finalData.nodes && finalData.nodes.length > 0)) {
           nodes = finalData.nodes;
           canvas.render(nodes, true);
           updateStats();
@@ -1416,8 +1433,12 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err: any) {
       console.error(err);
       thinkingWrapper.remove();
-      canvas.showThinkingError('Orchestrator', `Turn error: ${err.message}`);
-      appendMessage('assistant', `Sorry, something went wrong: ${err.message}`);
+      const rawMsg = err.message || '';
+      const cleanMsg = rawMsg.includes('429') || rawMsg.includes('Quota exceeded') || rawMsg.includes('503')
+        ? 'AI service rate limit / API quota exceeded — please wait a moment or check your API key and try again.'
+        : `Sorry, something went wrong: ${err.message}`;
+      canvas.showThinkingError('AI Assistant', cleanMsg);
+      appendMessage('assistant', `⚠️ ${cleanMsg}`);
     }
   }
 

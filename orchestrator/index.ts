@@ -253,9 +253,14 @@ export class KlaivoOrchestrator {
       if (onProgress) {
         onProgress({ agent: 'DiagnosisAgent', status: 'error', thought: 'Curriculum generation failed due to model unavailability.' });
       }
+      const rawMsg = intakeErr?.message || intakeErr?.rawError || '';
+      const isQuota = rawMsg.includes('429') || rawMsg.includes('Quota exceeded') || rawMsg.includes('Rate limit');
+      const cleanMsg = isQuota
+        ? 'AI service rate limit / API quota exceeded — please wait a moment or check your API key and try again.'
+        : 'Curriculum generation is temporarily unavailable — please try again shortly.';
       return {
         status: 'generation_failed',
-        message: 'Curriculum generation is temporarily unavailable — please try again shortly.',
+        message: cleanMsg,
         slotState: currentSlotState,
       };
     }
@@ -322,9 +327,14 @@ export class KlaivoOrchestrator {
       if (onProgress) {
         onProgress({ agent: 'CurriculumDrafter', status: 'error', thought: 'Curriculum generation failed.' });
       }
+      const rawMsg = drafterErr?.message || drafterErr?.rawError || '';
+      const isQuota = rawMsg.includes('429') || rawMsg.includes('Quota exceeded') || rawMsg.includes('Rate limit');
+      const cleanMsg = isQuota
+        ? 'AI service rate limit / API quota exceeded — please wait a moment or check your API key and try again.'
+        : 'Curriculum generation is temporarily unavailable — please try again shortly.';
       return {
         status: 'generation_failed',
-        message: 'Curriculum generation is temporarily unavailable — please try again shortly.',
+        message: cleanMsg,
         slotState: currentSlotState,
       };
     }
@@ -353,9 +363,14 @@ export class KlaivoOrchestrator {
       if (onProgress) {
         onProgress({ agent: 'CurriculumVerifier', status: 'error', thought: 'Curriculum verification failed — generation stopped.' });
       }
+      const rawMsg = verifierErr?.message || verifierErr?.rawError || '';
+      const isQuota = rawMsg.includes('429') || rawMsg.includes('Quota exceeded') || rawMsg.includes('Rate limit');
+      const cleanMsg = isQuota
+        ? 'AI service rate limit / API quota exceeded — please wait a moment or check your API key and try again.'
+        : 'Curriculum generation is temporarily unavailable — please try again shortly.';
       return {
         status: 'generation_failed',
-        message: 'Curriculum generation is temporarily unavailable — please try again shortly.',
+        message: cleanMsg,
         slotState: currentSlotState,
       };
     }

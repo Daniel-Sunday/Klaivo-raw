@@ -153,6 +153,16 @@ export function sanitizeRefinementDiff(diff: RefinementDiff, currentTree: TreeSk
  * NEVER exposes stack traces, raw model refusals, or JSON parse errors to the learner.
  */
 export function sanitizeUserErrorMessage(agentName: string, rawError: string): string {
+  if (
+    rawError?.includes('429') ||
+    rawError?.includes('Quota exceeded') ||
+    rawError?.includes('AgentGenerationFailedError') ||
+    rawError?.includes('Rate limit') ||
+    rawError?.includes('quota')
+  ) {
+    return 'AI service rate limit / API quota exceeded — please wait a moment or check your API key and try again.';
+  }
+
   switch (agentName) {
     case 'IntentAgent':
       return 'Could you clarify whether you want a quick answer, a structured learning path, or help solving a specific problem?';
