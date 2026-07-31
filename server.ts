@@ -46,8 +46,17 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+import { authRouter } from './routes/authRoutes';
+import { intakeRouter } from './routes/intakeRoutes';
+import { nodeRouter } from './routes/nodeRoutes';
+
 app.use(express.json());
 app.use(express.static(path.join(projectRoot, 'public')));
+
+// Mount Modular Express Routers
+app.use('/api/auth', authRouter);
+app.use('/api/intake', intakeRouter);
+app.use('/api/nodes', nodeRouter);
 
 // Singleton Orchestrator Instance for Phase 3 Pipeline
 const orchestrator = new KlaivoOrchestrator();

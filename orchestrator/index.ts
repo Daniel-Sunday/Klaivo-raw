@@ -25,7 +25,20 @@ import { runReflectionAgent } from '../agents/reflectionAgent';
 import { createStarterSkeleton, sanitizeRefinementDiff, sanitizeUserErrorMessage } from '../utils/errorHandling';
 
 export interface AgentProgressEvent {
-  agent: 'IntentAgent' | 'DiagnosisAgent' | 'CurriculumDrafter' | 'CurriculumVerifier';
+  agent:
+    | 'IntentAgent'
+    | 'DiagnosisAgent'
+    | 'CurriculumDrafter'
+    | 'CurriculumVerifier'
+    | 'TeachingAgent'
+    | 'AssessmentAgent'
+    | 'MemoryUpdateAgent'
+    | 'RefinementAgent'
+    | 'ReflectionAgent'
+    | 'TaskSimulationAgent'
+    | 'CurriculumMonitor'
+    | 'RoutingAgent'
+    | string;
   status: 'started' | 'thought' | 'done' | 'error';
   thought?: string;
   payload?: any;

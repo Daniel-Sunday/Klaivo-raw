@@ -3011,5 +3011,168 @@ header.app-header {
   color: #ECECE9;
 }
 
+/* ======================================================
+   INLINE CHAT THINKING ACCORDION (Antigravity/Codex Style)
+   ====================================================== */
+
+.inline-agent-message {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.inline-thinking-accordion {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  margin-bottom: 8px;
+}
+
+.inline-thinking-accordion:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.thinking-accordion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.thinking-accordion-header .header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thinking-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3b82f6;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.6);
+  animation: thinkingPulse 1.4s infinite ease-in-out;
+}
+
+.thinking-pulse-dot.completed {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+  animation: none;
+}
+
+@keyframes thinkingPulse {
+  0%, 100% { transform: scale(0.85); opacity: 0.5; }
+  50% { transform: scale(1.15); opacity: 1; }
+}
+
+.thinking-title-text {
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.thinking-chevron {
+  font-size: 0.7rem;
+  transition: transform 0.2s ease;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.inline-thinking-accordion.expanded .thinking-chevron {
+  transform: rotate(180deg);
+}
+
+.thinking-accordion-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.inline-thinking-accordion.expanded .thinking-accordion-body {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.thinking-steps-list {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.thinking-step-item {
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.thinking-step-item.status-done {
+  border-left-color: #10b981;
+}
+
+.thinking-step-item.status-started {
+  border-left-color: #3b82f6;
+}
+
+.thinking-step-item.status-error {
+  border-left-color: #f43f5e;
+}
+
+.step-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.step-icon {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+.step-agent-name {
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.step-status-tag {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.step-status-tag.tag-done { color: #10b981; background: rgba(16, 185, 129, 0.15); }
+.step-status-tag.tag-started { color: #3b82f6; background: rgba(59, 130, 246, 0.15); }
+.step-status-tag.tag-error { color: #f43f5e; background: rgba(244, 63, 94, 0.15); }
+
+.step-thought-text {
+  margin-top: 4px;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.inline-assistant-response-text {
+  font-family: var(--font-serif);
+  font-size: 0.96rem;
+  line-height: 1.6;
+  color: var(--text-primary);
+  padding: 4px 0;
+}
+
+
 
 
