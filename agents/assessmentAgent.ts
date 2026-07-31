@@ -11,7 +11,8 @@ export interface AssessmentAgentInput {
 
 export async function runAssessmentAgent(
   input: AssessmentAgentInput,
-  mockOutput?: Partial<AssessmentResult>
+  mockOutput?: Partial<AssessmentResult>,
+  signal?: AbortSignal
 ): Promise<AgentResult<AssessmentResult>> {
   const systemInstruction = `You are grading with the honesty of a real subject-matter expert, not a supportive coach trying to make the learner feel good.
 
@@ -43,6 +44,7 @@ Prior Mastery Entry: ${JSON.stringify(input.priorMastery || { level: 0, confusio
     inputData: input,
     schema: AssessmentResultSchema,
     temperature: 0.1,
+    signal,
     mockFn: mockOutput
       ? () => ({
           nodeId: input.node.id,

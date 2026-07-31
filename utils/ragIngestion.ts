@@ -1,11 +1,8 @@
 import * as db from '../database';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getModelProvider, NvidiaEmbeddingProvider } from '../providers/modelProvider';
 import dotenv from 'dotenv';
 
 dotenv.config();
-
-const apiKey = process.env.GEMINI_API_KEY || '';
-const genAI = new GoogleGenerativeAI(apiKey);
 
 export interface ArtifactChunk {
   chunkIndex: number;
@@ -56,14 +53,12 @@ export async function processUploadedArtifact(
   };
 
   try {
-    const modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
-    const model = genAI.getGenerativeModel({ model: modelName });
+    const provider = getModelProvider();
     const prompt = `Extract structured syllabus and assessment metadata from this uploaded document:
 Filename: "${filename}"
 Document Snippet:
-"${rawText.slice(0, 3000)}"
-
-Output valid JSON matching this structure:
+"${rawText.slice(0, 3000)}"`;
+    const sysInstruction = `Output valid JSON matching this exact structure:
 {
   "subjectTitle": "string",
   "importantTopics": ["topic1", "topic2"],
@@ -71,11 +66,8 @@ Output valid JSON matching this structure:
   "keyTerms": ["term1", "term2"],
   "summary": "string"
 }`;
-    const result = await model.generateContent(prompt);
-    const textOut = result.response.text();
-    const jsonMatch = textOut.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = await provider.generateJSON<SyllabusMetadata>(prompt, sysInstruction);
+    if (parsed) {
       metadata = {
         subjectTitle: parsed.subjectTitle || metadata.subjectTitle,
         importantTopics: parsed.importantTopics || [],
@@ -88,11 +80,21 @@ Output valid JSON matching this structure:
     console.warn('[RAG] Fallback to default metadata extraction:', err.message);
   }
 
-  // 3. Save artifact & chunks to DB
+  // 3. Save artifact & generate vector embeddings
   await db.saveSessionArtifact(sessionId, artifactId, filename, rawText, metadata);
 
+  const embeddingProvider = process.env.NVIDIA_API_KEY ? new NvidiaEmbeddingProvider() : null;
+
   for (let i = 0; i < chunks.length; i++) {
-    await db.saveVectorEmbedding(sessionId, artifactId, i, chunks[i], []);
+    let vector: number[] = [];
+    if (embeddingProvider) {
+      try {
+        vector = await embeddingProvider.generateEmbedding(chunks[i], 'passage');
+      } catch (embErr: any) {
+        console.warn(`[RAG] NVIDIA Embedding failed for chunk ${i}: ${embErr.message}`);
+      }
+    }
+    await db.saveVectorEmbedding(sessionId, artifactId, i, chunks[i], vector);
   }
 
   return {
@@ -126,3 +128,4 @@ export async function searchSessionArtifacts(
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, topK).map((s) => s.chunk);
 }
+

@@ -27,7 +27,8 @@ export interface IntentAgentInput {
 
 export async function runIntentAgent(
   input: IntentAgentInput,
-  mockOutput?: Partial<IntentAgentOutput>
+  mockOutput?: Partial<IntentAgentOutput>,
+  signal?: AbortSignal
 ): Promise<AgentResult<IntentAgentOutput>> {
   const learnerId = input.learnerState?.learnerId || 'anonymous_learner';
 
@@ -55,6 +56,7 @@ Existing Learner Goal Context: ${input.learnerState?.currentGoal.specificObjecti
     inputData: input,
     schema: IntentAgentOutputSchema,
     temperature: 0.1,
+    signal,
     mockFn: mockOutput
       ? () => {
           const confidence = mockOutput.confidence ?? 0.9;

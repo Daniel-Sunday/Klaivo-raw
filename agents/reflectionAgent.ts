@@ -12,7 +12,8 @@ export interface ReflectionAgentInput {
 
 export async function runReflectionAgent(
   input: ReflectionAgentInput,
-  mockOutput?: Partial<SessionSummary>
+  mockOutput?: Partial<SessionSummary>,
+  signal?: AbortSignal
 ): Promise<AgentResult<SessionSummary>> {
   const systemInstruction = `You are the Klaivo Reflection Agent. Your job is to compress session activity into a concise, high-signal SessionSummary.
 
@@ -47,6 +48,7 @@ Sample Log Actions: ${input.recentLogs.map((l) => `${l.agentName} (${l.validatio
     inputData: input,
     schema: SessionSummarySchema,
     temperature: 0.2,
+    signal,
     mockFn: mockOutput
       ? () => ({
           sessionId: input.sessionId,

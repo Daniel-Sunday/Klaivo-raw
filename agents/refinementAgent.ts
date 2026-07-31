@@ -17,7 +17,8 @@ export interface RefinementAgentInput {
 
 export async function runRefinementAgent(
   input: RefinementAgentInput,
-  mockOutput?: Partial<RefinementDiff>
+  mockOutput?: Partial<RefinementDiff>,
+  signal?: AbortSignal
 ): Promise<AgentResult<RefinementDiff>> {
   const masteredNodeIds = input.currentTree.nodes
     .filter((n) => n.status === 'mastered')
@@ -54,6 +55,7 @@ Current Nodes: ${JSON.stringify(input.currentTree.nodes.map((n) => ({ id: n.id, 
     inputData: input,
     schema: RefinementDiffSchema,
     temperature: 0.3,
+    signal,
     mockFn: mockOutput
       ? () => ({
           treeId: input.currentTree.treeId,

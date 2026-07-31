@@ -1,7 +1,5 @@
 import { Router, Request, Response } from 'express';
 import { generateTaskSimulation, evaluateTaskSubmission } from '../agents/taskSimulationAgent';
-import { runTeachingAgent } from '../agents/teachingAgent';
-import { runAssessmentAgent } from '../agents/assessmentAgent';
 import * as db from '../database';
 
 export const nodeRouter = Router();
@@ -14,7 +12,8 @@ nodeRouter.post('/:id/task', async (req: Request, res: Response): Promise<any> =
     const nodeId = req.params.id;
     const { sessionId, goalSummary = 'Master target domain', vocabularyLevel = 'intermediate' } = req.body;
 
-    const node = await db.getNode(nodeId, sessionId);
+    const nodes = await db.getNodes(sessionId);
+    const node = nodes.find((n) => n.id === nodeId);
     if (!node) {
       return res.status(404).json({ error: 'Node not found' });
     }
@@ -26,8 +25,11 @@ nodeRouter.post('/:id/task', async (req: Request, res: Response): Promise<any> =
         title: node.title,
         oneLineSummary: node.description || node.title,
         goalRelevance: node.description || node.title,
-        prerequisiteIds: JSON.parse(node.dependencies || '[]'),
-        status: node.status as any,
+        prerequisiteIds: Array.isArray(node.dependencies) ? node.dependencies : JSON.parse((node.dependencies as string) || '[]'),
+        status: (node.status as any) || 'available',
+        content: null,
+        masteryScore: 0.0,
+        depth: 0,
       },
       goalSummary,
       vocabularyLevel,
@@ -46,16 +48,17 @@ nodeRouter.post('/:id/task', async (req: Request, res: Response): Promise<any> =
 nodeRouter.post('/:id/evaluate', async (req: Request, res: Response): Promise<any> => {
   try {
     const nodeId = req.params.id;
-    const { sessionId, taskSpec, submission } = req.body;
+    const { sessionId = 'default_session', taskSpec, submission } = req.body;
 
     if (!submission) {
       return res.status(400).json({ error: 'Submission content is required' });
     }
 
-    const evaluation = await evaluateTaskSubmission(taskSpec, submission);
+    const evaluation = await evaluateTaskSubmission(taskSpec, submission, sessionId);
     return res.json({ evaluation });
   } catch (err: any) {
     console.error('[NodeRouter] Evaluation failed:', err);
     return res.status(500).json({ error: err.message || 'Evaluation failed' });
   }
 });
+

@@ -1,3 +1,4 @@
+import { NvidiaEmbeddingProvider } from '../providers/modelProvider';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as db from '../database';
 import dotenv from 'dotenv';
@@ -5,7 +6,8 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const apiKey = process.env.GEMINI_API_KEY || '';
-const genAI = new GoogleGenerativeAI(apiKey);
+const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
+const nvidiaEmbedder = process.env.NVIDIA_API_KEY ? new NvidiaEmbeddingProvider() : null;
 
 export interface MemoryVectorEntry {
   id: string;
@@ -44,23 +46,34 @@ function generateFallbackEmbedding(text: string, dimensions = 64): number[] {
 }
 
 /**
- * Generate embedding vector using Gemini text-embedding-004 model with zero-fail fallback
+ * Generate embedding vector using NVIDIA Embedding Provider / Gemini with zero-fail fallback
  */
 export async function getEmbedding(text: string): Promise<number[]> {
   if (!text || text.trim().length === 0) return generateFallbackEmbedding('empty');
 
-  try {
-    const model = genAI.getGenerativeModel({ model: 'text-embedding-004' });
-    const result = await model.embedContent(text);
-    if (result?.embedding?.values) {
-      return result.embedding.values;
+  if (nvidiaEmbedder) {
+    try {
+      return await nvidiaEmbedder.generateEmbedding(text, 'passage');
+    } catch (err: any) {
+      console.warn('[MemoryEngine] NVIDIA embedding call failed — failing over to Gemini/fallback:', err.message);
     }
-  } catch (err) {
-    console.warn('[MemoryEngine] Gemini embedding API call failed — utilizing vector fallback');
+  }
+
+  if (genAI) {
+    try {
+      const model = genAI.getGenerativeModel({ model: 'text-embedding-004' });
+      const result = await model.embedContent(text);
+      if (result?.embedding?.values) {
+        return result.embedding.values;
+      }
+    } catch (err: any) {
+      console.warn('[MemoryEngine] Gemini embedding API call failed — utilizing vector fallback:', err.message);
+    }
   }
 
   return generateFallbackEmbedding(text);
 }
+
 
 /**
  * Store a learner misconception into long-term vector memory

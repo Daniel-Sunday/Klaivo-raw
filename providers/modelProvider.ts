@@ -5,9 +5,9 @@ dotenv.config();
 
 export interface ModelProvider {
   name: string;
-  generateJSON<T = any>(prompt: string, systemInstruction?: string): Promise<T>;
-  generateText(prompt: string, systemInstruction?: string): Promise<string>;
-  streamText(prompt: string, systemInstruction: string, onChunk: (chunk: string) => void): Promise<void>;
+  generateJSON<T = any>(prompt: string, systemInstruction?: string, signal?: AbortSignal): Promise<T>;
+  generateText(prompt: string, systemInstruction?: string, signal?: AbortSignal): Promise<string>;
+  streamText(prompt: string, systemInstruction: string, onChunk: (chunk: string) => void, signal?: AbortSignal): Promise<void>;
 }
 
 /**
@@ -27,60 +27,93 @@ export class GeminiProvider implements ModelProvider {
     this.modelName = process.env.GEMINI_MODEL || modelName;
   }
 
-  async generateJSON<T = any>(prompt: string, systemInstruction?: string): Promise<T> {
+  async generateJSON<T = any>(prompt: string, systemInstruction?: string, signal?: AbortSignal): Promise<T> {
+    if (signal?.aborted) {
+      throw new Error('[GeminiProvider] Execution aborted');
+    }
     const model = this.ai.getGenerativeModel({
       model: this.modelName,
       systemInstruction,
       generationConfig: { responseMimeType: 'application/json' },
     });
 
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent(
+      { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+      { signal }
+    );
     const text = result.response.text();
-    return JSON.parse(text) as T;
+    const cleaned = cleanJsonOutput(text);
+    return JSON.parse(cleaned) as T;
   }
 
-  async generateText(prompt: string, systemInstruction?: string): Promise<string> {
+  async generateText(prompt: string, systemInstruction?: string, signal?: AbortSignal): Promise<string> {
+    if (signal?.aborted) {
+      throw new Error('[GeminiProvider] Execution aborted');
+    }
     const model = this.ai.getGenerativeModel({
       model: this.modelName,
       systemInstruction,
     });
 
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent(
+      { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+      { signal }
+    );
     return result.response.text();
   }
 
-  async streamText(prompt: string, systemInstruction: string, onChunk: (chunk: string) => void): Promise<void> {
-    const model = this.ai.getGenerativeModel({
-      model: this.modelName,
-      systemInstruction,
-    });
-
-    const responseStream = await model.generateContentStream(prompt);
-    for await (const chunk of responseStream.stream) {
-      const text = chunk.text();
-      if (text) {
-        onChunk(text);
-      }
-    }
+  async streamText(prompt: string, systemInstruction: string, onChunk: (chunk: string) => void, signal?: AbortSignal): Promise<void> {
+    const text = await this.generateText(prompt, systemInstruction, signal);
+    onChunk(text);
   }
 }
 
 /**
+ * Helper to strip markdown code blocks from model JSON outputs
+ */
+export function cleanJsonOutput(raw: string): string {
+  let cleaned = raw.trim();
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  }
+  return cleaned;
+}
+
+/**
  * 2. NVIDIA NIM API Provider (build.nvidia.com)
- * Offers ultra-low cost/free high-performance models: meta/llama-3.3-70b-instruct, deepseek-ai/deepseek-r1
+ * Offers high-performance models (Meta Llama 3.1 70B, Llama 3.3 70B, Llama 3.1 8B)
+ * with automated failover for model concurrency limits or API errors.
  */
 export class NvidiaNimProvider implements ModelProvider {
   name = 'nvidia-nim';
   private apiKey: string;
-  private modelName: string;
+  private primaryModel: string;
   private baseUrl = 'https://integrate.api.nvidia.com/v1/chat/completions';
 
-  constructor(apiKey?: string, modelName = 'meta/llama-3.3-70b-instruct') {
+  // Fallback candidate sequence ordered by reliability and reasoning capability
+  private fallbackModels = [
+    'meta/llama-3.1-70b-instruct',
+    'meta/llama-3.3-70b-instruct',
+    'meta/llama-3.1-8b-instruct',
+    'nvidia/llama-3.1-nemotron-70b-instruct'
+  ];
+
+  constructor(apiKey?: string, modelName = 'meta/llama-3.1-70b-instruct') {
     this.apiKey = apiKey || process.env.NVIDIA_API_KEY || '';
-    this.modelName = modelName;
+    this.primaryModel = modelName;
   }
 
-  async generateJSON<T = any>(prompt: string, systemInstruction?: string): Promise<T> {
+  private getModelCandidates(): string[] {
+    const list = [this.primaryModel];
+    for (const m of this.fallbackModels) {
+      if (!list.includes(m)) {
+        list.push(m);
+      }
+    }
+    return list;
+  }
+
+  async generateJSON<T = any>(prompt: string, systemInstruction?: string, signal?: AbortSignal): Promise<T> {
     if (!this.apiKey) {
       throw new Error('[NvidiaNimProvider] NVIDIA_API_KEY is missing.');
     }
@@ -91,32 +124,51 @@ export class NvidiaNimProvider implements ModelProvider {
     }
     messages.push({ role: 'user', content: prompt + '\nRespond ONLY with valid JSON.' });
 
-    const response = await fetch(this.baseUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: this.modelName,
-        messages,
-        temperature: 0.2,
-        max_tokens: 4096,
-        response_format: { type: 'json_object' },
-      }),
-    });
+    const candidates = this.getModelCandidates();
+    let lastError: Error | null = null;
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`[NvidiaNimProvider] HTTP ${response.status}: ${errText}`);
+    for (const model of candidates) {
+      if (signal?.aborted) {
+        throw new Error('[NvidiaNimProvider] Execution aborted');
+      }
+      try {
+        const response = await fetch(this.baseUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages,
+            temperature: 0.2,
+            max_tokens: 4096,
+          }),
+          signal,
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`HTTP ${response.status}: ${errText}`);
+        }
+
+        const data: any = await response.json();
+        const rawContent = data?.choices?.[0]?.message?.content || '{}';
+        const cleaned = cleanJsonOutput(rawContent);
+        return JSON.parse(cleaned) as T;
+      } catch (err: any) {
+        if (err.name === 'AbortError' || signal?.aborted) {
+          throw err;
+        }
+        console.warn(`[NvidiaNimProvider] Model candidate '${model}' failed: ${err.message}. Trying next candidate...`);
+        lastError = err;
+      }
     }
 
-    const data: any = await response.json();
-    const rawContent = data?.choices?.[0]?.message?.content || '{}';
-    return JSON.parse(rawContent) as T;
+    throw lastError || new Error('[NvidiaNimProvider] All model candidates failed.');
   }
 
-  async generateText(prompt: string, systemInstruction?: string): Promise<string> {
+  async generateText(prompt: string, systemInstruction?: string, signal?: AbortSignal): Promise<string> {
     if (!this.apiKey) {
       throw new Error('[NvidiaNimProvider] NVIDIA_API_KEY is missing.');
     }
@@ -127,6 +179,78 @@ export class NvidiaNimProvider implements ModelProvider {
     }
     messages.push({ role: 'user', content: prompt });
 
+    const candidates = this.getModelCandidates();
+    let lastError: Error | null = null;
+
+    for (const model of candidates) {
+      if (signal?.aborted) {
+        throw new Error('[NvidiaNimProvider] Execution aborted');
+      }
+      try {
+        const response = await fetch(this.baseUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages,
+            temperature: 0.3,
+            max_tokens: 4096,
+          }),
+          signal,
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`HTTP ${response.status}: ${errText}`);
+        }
+
+        const data: any = await response.json();
+        const content = data?.choices?.[0]?.message?.content;
+        if (typeof content === 'string') {
+          return content;
+        }
+        throw new Error('Invalid or missing response content structure');
+      } catch (err: any) {
+        if (err.name === 'AbortError' || signal?.aborted) {
+          throw err;
+        }
+        console.warn(`[NvidiaNimProvider] Model candidate '${model}' failed: ${err.message}. Trying next candidate...`);
+        lastError = err;
+      }
+    }
+
+    throw lastError || new Error('[NvidiaNimProvider] All model candidates failed.');
+  }
+
+  async streamText(prompt: string, systemInstruction: string, onChunk: (chunk: string) => void, signal?: AbortSignal): Promise<void> {
+    const text = await this.generateText(prompt, systemInstruction, signal);
+    onChunk(text);
+  }
+}
+
+/**
+ * 3. NVIDIA Embedding Provider (build.nvidia.com)
+ * High-performance 1024-dimension vector embeddings using nvidia/nv-embedqa-e5-v5 (~385ms)
+ */
+export class NvidiaEmbeddingProvider {
+  name = 'nvidia-embedding';
+  private apiKey: string;
+  private modelName: string;
+  private baseUrl = 'https://integrate.api.nvidia.com/v1/embeddings';
+
+  constructor(apiKey?: string, modelName = 'nvidia/nv-embedqa-e5-v5') {
+    this.apiKey = apiKey || process.env.NVIDIA_API_KEY || '';
+    this.modelName = modelName;
+  }
+
+  async generateEmbedding(text: string, inputType: 'passage' | 'query' = 'passage', signal?: AbortSignal): Promise<number[]> {
+    if (!this.apiKey) {
+      throw new Error('[NvidiaEmbeddingProvider] NVIDIA_API_KEY is missing.');
+    }
+
     const response = await fetch(this.baseUrl, {
       method: 'POST',
       headers: {
@@ -134,30 +258,33 @@ export class NvidiaNimProvider implements ModelProvider {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
+        input: [text],
         model: this.modelName,
-        messages,
-        temperature: 0.3,
-        max_tokens: 4096,
+        input_type: inputType,
       }),
+      signal,
     });
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`[NvidiaNimProvider] HTTP ${response.status}: ${errText}`);
+      throw new Error(`[NvidiaEmbeddingProvider] HTTP ${response.status}: ${errText}`);
     }
 
     const data: any = await response.json();
-    return data?.choices?.[0]?.message?.content || '';
-  }
+    if (data?.data?.[0]?.embedding) {
+      return data.data[0].embedding;
+    }
 
-  async streamText(prompt: string, systemInstruction: string, onChunk: (chunk: string) => void): Promise<void> {
-    const text = await this.generateText(prompt, systemInstruction);
-    onChunk(text);
+    throw new Error('[NvidiaEmbeddingProvider] Invalid embedding response format');
   }
 }
 
+// Module-level persistent state for circuit breaker (persists across per-call MultiModelRouter instances)
+const providerFailureTimestamps = new Map<string, number>();
+const CIRCUIT_BREAKER_COOLDOWN_MS = 30000; // 30s cooldown
+
 /**
- * 3. Multi-Model Provider Router with Failover & Load Balancing
+ * 4. Multi-Model Provider Router with Failover & Load Balancing & Per-Provider Circuit Breaker
  */
 export class MultiModelRouter implements ModelProvider {
   name = 'multi-model-router';
@@ -171,8 +298,7 @@ export class MultiModelRouter implements ModelProvider {
 
     // 2. Secondary/High-Performance: NVIDIA NIM build.nvidia.com provider
     if (process.env.NVIDIA_API_KEY) {
-      this.providers.push(new NvidiaNimProvider(process.env.NVIDIA_API_KEY, 'meta/llama-3.3-70b-instruct'));
-      this.providers.push(new NvidiaNimProvider(process.env.NVIDIA_API_KEY, 'deepseek-ai/deepseek-r1'));
+      this.providers.push(new NvidiaNimProvider(process.env.NVIDIA_API_KEY, 'meta/llama-3.1-70b-instruct'));
     }
 
     // Fallback if no keys set: default Gemini instantiation to preserve error handling
@@ -181,46 +307,71 @@ export class MultiModelRouter implements ModelProvider {
     }
   }
 
-  async generateJSON<T = any>(prompt: string, systemInstruction?: string): Promise<T> {
+  async generateJSON<T = any>(prompt: string, systemInstruction?: string, signal?: AbortSignal): Promise<T> {
     let lastError: any = null;
+    const now = Date.now();
 
     for (const provider of this.providers) {
+      if (signal?.aborted) {
+        throw new Error('[MultiModelRouter] Execution aborted');
+      }
+
+      const lastFailure = providerFailureTimestamps.get(provider.name) || 0;
+      if (now - lastFailure < CIRCUIT_BREAKER_COOLDOWN_MS) {
+        console.warn(`[MultiModelRouter] Skipping provider '${provider.name}' due to circuit breaker cooldown (${Math.round((CIRCUIT_BREAKER_COOLDOWN_MS - (now - lastFailure)) / 1000)}s remaining).`);
+        continue;
+      }
+
       try {
         console.log(`[MultiModelRouter] Routing generateJSON via provider: ${provider.name}`);
-        return await provider.generateJSON<T>(prompt, systemInstruction);
+        return await provider.generateJSON<T>(prompt, systemInstruction, signal);
       } catch (err: any) {
+        if (err.name === 'AbortError' || signal?.aborted) {
+          throw err;
+        }
+        providerFailureTimestamps.set(provider.name, Date.now());
         console.warn(`[MultiModelRouter] Provider ${provider.name} failed: ${err.message}. Failing over...`);
         lastError = err;
       }
     }
 
-    throw lastError || new Error('[MultiModelRouter] All model providers failed.');
+    throw lastError || new Error('[MultiModelRouter] All model providers failed or are on circuit breaker cooldown.');
   }
 
-  async generateText(prompt: string, systemInstruction?: string): Promise<string> {
+  async generateText(prompt: string, systemInstruction?: string, signal?: AbortSignal): Promise<string> {
     let lastError: any = null;
+    const now = Date.now();
 
     for (const provider of this.providers) {
+      if (signal?.aborted) {
+        throw new Error('[MultiModelRouter] Execution aborted');
+      }
+
+      const lastFailure = providerFailureTimestamps.get(provider.name) || 0;
+      if (now - lastFailure < CIRCUIT_BREAKER_COOLDOWN_MS) {
+        console.warn(`[MultiModelRouter] Skipping provider '${provider.name}' due to circuit breaker cooldown (${Math.round((CIRCUIT_BREAKER_COOLDOWN_MS - (now - lastFailure)) / 1000)}s remaining).`);
+        continue;
+      }
+
       try {
         console.log(`[MultiModelRouter] Routing generateText via provider: ${provider.name}`);
-        return await provider.generateText(prompt, systemInstruction);
+        return await provider.generateText(prompt, systemInstruction, signal);
       } catch (err: any) {
+        if (err.name === 'AbortError' || signal?.aborted) {
+          throw err;
+        }
+        providerFailureTimestamps.set(provider.name, Date.now());
         console.warn(`[MultiModelRouter] Provider ${provider.name} failed: ${err.message}. Failing over...`);
         lastError = err;
       }
     }
 
-    throw lastError || new Error('[MultiModelRouter] All model providers failed.');
+    throw lastError || new Error('[MultiModelRouter] All model providers failed or are on circuit breaker cooldown.');
   }
 
-  async streamText(prompt: string, systemInstruction: string, onChunk: (chunk: string) => void): Promise<void> {
-    const primary = this.providers[0];
-    try {
-      await primary.streamText(prompt, systemInstruction, onChunk);
-    } catch (err) {
-      const fallbackText = await this.generateText(prompt, systemInstruction);
-      onChunk(fallbackText);
-    }
+  async streamText(prompt: string, systemInstruction: string, onChunk: (chunk: string) => void, signal?: AbortSignal): Promise<void> {
+    const text = await this.generateText(prompt, systemInstruction, signal);
+    onChunk(text);
   }
 }
 

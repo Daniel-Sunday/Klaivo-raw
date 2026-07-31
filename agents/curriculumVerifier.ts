@@ -9,7 +9,8 @@ export interface CurriculumVerifierInput {
 
 export async function runCurriculumVerifier(
   input: CurriculumVerifierInput,
-  mockOutput?: Partial<TreeSkeleton>
+  mockOutput?: Partial<TreeSkeleton>,
+  signal?: AbortSignal
 ): Promise<AgentResult<TreeSkeleton>> {
   const systemInstruction = `You are fact-checking a proposed curriculum against how this subject is actually taught by real institutions, textbooks, or established learning paths — not rubber-stamping it.
 
@@ -34,6 +35,7 @@ Reference Text / Standard Context: ${input.referenceSourceText || 'Standard doma
     inputData: input,
     schema: TreeSkeletonSchema,
     temperature: 0.2,
+    signal,
     mockFn: mockOutput
       ? () => ({
           ...input.skeleton,

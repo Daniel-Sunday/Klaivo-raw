@@ -58,17 +58,19 @@ export type AssessmentWorkflowResult =
 
 async function runStageWithTimeoutAndRetry<T>(
   stageName: string,
-  fn: () => Promise<T>,
-  timeoutMs: number = 15000,
+  fn: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number = 60000,
   onProgress?: (event: AgentProgressEvent) => void
 ): Promise<T> {
   const executeAttempt = () => {
     return new Promise<T>((resolve, reject) => {
+      const controller = new AbortController();
       const timer = setTimeout(() => {
+        controller.abort();
         reject(new Error(`${stageName} timed out after ${timeoutMs / 1000}s`));
       }, timeoutMs);
 
-      fn()
+      fn(controller.signal)
         .then((res) => {
           clearTimeout(timer);
           resolve(res);
@@ -91,6 +93,7 @@ async function runStageWithTimeoutAndRetry<T>(
         thought: `${stageName} delayed — retrying stage...`,
       });
     }
+    await new Promise((resolve) => setTimeout(resolve, 750));
     return await executeAttempt();
   }
 }
@@ -176,8 +179,8 @@ export class KlaivoOrchestrator {
 
         const intentResult = await runStageWithTimeoutAndRetry(
           'IntentAgent',
-          () => runIntentAgent({ rawMessage: userMessage, learnerState }, mockOverrides?.intent),
-          15000,
+          (signal) => runIntentAgent({ rawMessage: userMessage, learnerState }, mockOverrides?.intent, signal),
+          30000,
           onProgress
         );
 
@@ -243,7 +246,7 @@ export class KlaivoOrchestrator {
 
       diagnosisResult = await runStageWithTimeoutAndRetry(
         'DiagnosisAgent',
-        () => runDiagnosisAgent(
+        (signal) => runDiagnosisAgent(
           {
             learnerId: learnerState.learnerId,
             rawGoalStatement: userMessage,
@@ -252,9 +255,10 @@ export class KlaivoOrchestrator {
             contextArtifacts,
             intentClassification: intent,
           },
-          mockOverrides?.diagnosis
+          mockOverrides?.diagnosis,
+          signal
         ),
-        15000,
+        60000,
         onProgress
       );
 
@@ -318,7 +322,7 @@ export class KlaivoOrchestrator {
     try {
       const drafterResult = await runStageWithTimeoutAndRetry(
         'CurriculumDrafter',
-        () => runCurriculumDrafter(
+        (signal) => runCurriculumDrafter(
           {
             treeId,
             learnerId: learnerState.learnerId,
@@ -326,9 +330,10 @@ export class KlaivoOrchestrator {
             vocabularyLevel: learnerState.vocabularyLevel,
             masteryMap: learnerState.masteryMap,
           },
-          mockOverrides?.skeleton
+          mockOverrides?.skeleton,
+          signal
         ),
-        25000, // 25s robust timeout to allow full 8-15 node generation
+        150000, // 150s robust timeout to allow full node DAG generation on 70B models
         onProgress
       );
       skeleton = drafterResult.output;
@@ -360,8 +365,8 @@ export class KlaivoOrchestrator {
     try {
       const verifierResult = await runStageWithTimeoutAndRetry(
         'CurriculumVerifier',
-        () => runCurriculumVerifier({ skeleton }),
-        15000,
+        (signal) => runCurriculumVerifier({ skeleton }, undefined, signal),
+        45000,
         onProgress
       );
       skeleton = verifierResult.output;
@@ -419,12 +424,17 @@ export class KlaivoOrchestrator {
 
     const confusionFlags = learnerState.masteryMap[nodeId]?.confusionFlags || [];
     try {
-      const teachingResult = await runTeachingAgent({
-        learnerId: learnerState.learnerId,
-        node,
-        vocabularyLevel: learnerState.vocabularyLevel,
-        confusionFlags,
-      });
+      const teachingResult = await runStageWithTimeoutAndRetry(
+        'TeachingAgent',
+        (signal) =>
+          runTeachingAgent({
+            learnerId: learnerState.learnerId,
+            node,
+            vocabularyLevel: learnerState.vocabularyLevel,
+            confusionFlags,
+          }, undefined, signal),
+        30000
+      );
 
       node.content = teachingResult.output;
       return teachingResult.output;
@@ -458,12 +468,17 @@ export class KlaivoOrchestrator {
     const priorMastery = learnerState.masteryMap[nodeId] || null;
 
     try {
-      const assessmentRes = await runAssessmentAgent({
-        learnerId: learnerState.learnerId,
-        node,
-        learnerResponse,
-        priorMastery,
-      });
+      const assessmentRes = await runStageWithTimeoutAndRetry(
+        'AssessmentAgent',
+        (signal) =>
+          runAssessmentAgent({
+            learnerId: learnerState.learnerId,
+            node,
+            learnerResponse,
+            priorMastery,
+          }, undefined, signal),
+        30000
+      );
 
       const validatedAssessment = validateAssessmentResult(assessmentRes.output, tree);
       const { updatedState } = runMemoryUpdateAgent(validatedAssessment, learnerState);
@@ -506,13 +521,19 @@ export class KlaivoOrchestrator {
     let diff: RefinementDiff;
 
     try {
-      const refinementRes = await runRefinementAgent(
-        {
-          request,
-          currentTree,
-          masteryMap: learnerState.masteryMap,
-        },
-        mockOutput
+      const refinementRes = await runStageWithTimeoutAndRetry(
+        'RefinementAgent',
+        (signal) =>
+          runRefinementAgent(
+            {
+              request,
+              currentTree,
+              masteryMap: learnerState.masteryMap,
+            },
+            mockOutput,
+            signal
+          ),
+        30000
       );
       diff = refinementRes.output;
     } catch (err: any) {
@@ -565,13 +586,18 @@ export class KlaivoOrchestrator {
     recentLogs: AgentLog[]
   ): Promise<{ summary: SessionSummary; learnerState: LearnerState }> {
     try {
-      const reflectionRes = await runReflectionAgent({
-        sessionId,
-        learnerId: learnerState.learnerId,
-        recentLogs,
-        masteryMap: learnerState.masteryMap,
-        goalSummary: learnerState.currentGoal.specificObjective || learnerState.currentGoal.rawStatement,
-      });
+      const reflectionRes = await runStageWithTimeoutAndRetry(
+        'ReflectionAgent',
+        (signal) =>
+          runReflectionAgent({
+            sessionId,
+            learnerId: learnerState.learnerId,
+            recentLogs,
+            masteryMap: learnerState.masteryMap,
+            goalSummary: learnerState.currentGoal.specificObjective || learnerState.currentGoal.rawStatement,
+          }, undefined, signal),
+        30000
+      );
 
       learnerState.sessionHistory.push(reflectionRes.output);
       return { summary: reflectionRes.output, learnerState };

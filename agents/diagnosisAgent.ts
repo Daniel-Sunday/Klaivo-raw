@@ -23,7 +23,8 @@ export interface DiagnosisAgentInput {
 
 export async function runDiagnosisAgent(
   input: DiagnosisAgentInput,
-  mockOutput?: Partial<DiagnosisAgentOutput>
+  mockOutput?: Partial<DiagnosisAgentOutput>,
+  signal?: AbortSignal
 ): Promise<AgentResult<DiagnosisAgentOutput>> {
   const slotState = input.currentSlotState || {
     slotsResolved: {},
@@ -114,6 +115,7 @@ Context Artifacts: ${input.contextArtifacts?.join(', ') || 'None'}`;
     inputData: input,
     schema: DiagnosisAgentOutputSchema,
     temperature: 0.2,
+    signal,
     mockFn: mockOutput
       ? () => ({
           needsMoreContext: mockOutput.needsMoreContext ?? false,

@@ -13,7 +13,8 @@ export interface TeachingAgentInput {
 
 export async function runTeachingAgent(
   input: TeachingAgentInput,
-  mockOutput?: Partial<NodeContent>
+  mockOutput?: Partial<NodeContent>,
+  signal?: AbortSignal
 ): Promise<AgentResult<NodeContent>> {
   if (input.node.content && !input.forceRegenerate) {
     const cachedContent = input.node.content;
@@ -75,6 +76,7 @@ Confusion Flags: ${input.confusionFlags?.join(', ') || 'None'}`;
     inputData: input,
     schema: NodeContentSchema,
     temperature: 0.3,
+    signal,
     mockFn: mockOutput
       ? () => ({
         nodeId: input.node.id,

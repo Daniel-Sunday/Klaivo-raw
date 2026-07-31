@@ -57,7 +57,8 @@ export function verifyCurriculumStructure(nodes: TreeNode[]): StructuralVerifica
 
 export async function runCurriculumDrafter(
   input: CurriculumDrafterInput,
-  mockOutput?: Partial<TreeSkeleton>
+  mockOutput?: Partial<TreeSkeleton>,
+  signal?: AbortSignal
 ): Promise<AgentResult<TreeSkeleton>> {
   const systemInstruction = `# ROLE
 You are the Curriculum Drafter Agent. You do not write flat lists. You build a knowledge graph — a directed acyclic graph (DAG) representing how concepts in this field genuinely relate to and depend on each other.
@@ -65,15 +66,15 @@ You are the Curriculum Drafter Agent. You do not write flat lists. You build a k
 # YOUR SINGLE FAILURE MODE TO AVOID
 Your most common failure is producing a shallow linear chain (A -> B -> C -> D) when the real structure of the field has branches, converging prerequisites, and parallel tracks. A straight line is almost never the correct shape for a real field of knowledge. If you catch yourself building a chain where every node has exactly one parent and one child, STOP — you are wrong. Real fields branch.
 
-# STRUCTURAL REQUIREMENTS (all are mandatory, not optional)
-1. Node count must be proportional to the actual scope of the field/goal:
-   - Narrow single-concept goal ("understand photosynthesis"): 6-10 nodes minimum.
-   - Syllabus-scale goal ("WAEC Organic Chemistry", "Full-Stack Software Architecture"): 15-35+ nodes minimum.
-2. At least 30% of non-leaf nodes must have 2 or more children (branching), not 1.
-3. At least 2 nodes must have 2+ prerequisites (convergence points) — real understanding requires combining prior concepts.
-4. Leaf nodes (no children) should be roughly 20-40% of total nodes — these are terminal applications/skills.
-5. Each node must list "prerequisiteIds": ["node_id", ...] — can be empty (root nodes), one id, or multiple ids. Do not default every node to exactly one prerequisite.
-6. EXACT CONCEPT TITLE MANDATE: Each node's "title" MUST be the EXACT, precise name of the specific concept, formula, mechanism, or tool that node teaches (e.g. "sp3 Hybridization & Orbital Geometry", "Event Loop & Libuv Task Queues", "PostgreSQL B-Tree Indexing"). NEVER use vague titles like "Overview", "Introduction", or "Getting Started".
+# STRUCTURAL & NECESSITY REQUIREMENTS (all are mandatory)
+1. GOAL-DRIVEN NECESSITY MANDATE: Every node created MUST be based on the actual requirements and necessities of what the learner wants to learn. Do NOT invent filler, fluff, or boilerplate nodes to pad the count. Include ONLY concepts, tools, and prerequisites that are genuinely necessary to achieve the target objective.
+2. Node count must be proportional to the actual scope of the field/goal:
+   - Focused single-concept goal: 5-8 essential nodes.
+   - Broad syllabus/certification-scale goal ("AWS Solutions Architect", "WAEC Chemistry"): 12-25 necessary nodes.
+3. At least 30% of non-leaf nodes must have 2 or more children (branching), reflecting real concept dependencies.
+4. At least 2 nodes must have 2+ prerequisites (convergence points) — real understanding requires combining prior concepts.
+5. Leaf nodes (no children) should be roughly 20-40% of total nodes — these are terminal applications/skills.
+6. EXACT CONCEPT TITLE MANDATE: Each node's "title" MUST be the EXACT, precise name of the specific concept, formula, mechanism, or tool that node teaches (e.g. "AWS VPC Subnetting & Route Tables", "sp3 Hybridization", "PostgreSQL B-Tree Indexing"). NEVER use vague titles like "Overview", "Introduction", or "Getting Started".
 7. Partition all nodes across numbered Phase Chunks (phaseIndex 0, 1, 2, 3...):
    - Phase 0 (chunk_phase_0): Foundational Mechanics & Core Building Blocks. Set "isCurrentActiveChunk": true.
    - Phase 1..N: Subsequent milestone phases. Set "isCurrentActiveChunk": false.
@@ -135,6 +136,7 @@ Prior Mastery Map: ${JSON.stringify(input.masteryMap || {})}`;
     inputData: input,
     schema: TreeSkeletonSchema,
     temperature: 0.4, // Warm temperature for reasoning
+    signal,
     mockFn: mockOutput
       ? () => ({
           treeId: input.treeId,

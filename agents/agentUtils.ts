@@ -1,14 +1,11 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { z } from 'zod';
 import { AgentLog, AgentLogSchema } from '../schemas';
 import { saveAgentLog } from '../database';
 import { logger, getTraceContext } from '../utils/logger';
+import { getModelProvider } from '../providers/modelProvider';
 import dotenv from 'dotenv';
 
 dotenv.config();
-
-const apiKey = process.env.GEMINI_API_KEY || '';
-const genAI = new GoogleGenerativeAI(apiKey);
 
 export interface AgentExecutionOptions<TInput, TOutput> {
   agentName: string;
@@ -21,6 +18,7 @@ export interface AgentExecutionOptions<TInput, TOutput> {
   maxRetries?: number;
   modelName?: string;
   mockFn?: (input: TInput) => Partial<TOutput>;
+  signal?: AbortSignal;
 }
 
 export class AgentGenerationFailedError extends Error {
@@ -52,8 +50,9 @@ export async function executeAgent<TInput, TOutput>(
     schema,
     temperature = 0.2,
     maxRetries = 3,
-    modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+    modelName,
     mockFn,
+    signal,
   } = options;
 
   const logId = `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -68,7 +67,7 @@ export async function executeAgent<TInput, TOutput>(
   logger.info({
     agent: agentName,
     learnerId,
-    modelName,
+    modelName: modelName || 'multi-model-router',
     inputSummary: inputSummary.slice(0, 80),
     event: 'agent_start',
   }, `[${agentName}] STARTING`);
@@ -223,8 +222,10 @@ export async function executeAgent<TInput, TOutput>(
     return {};
   };
 
-  // Mock execution path for isolated testing when mockFn provided, USE_AGENT_MOCKS is set, or no API key present
-  if (mockFn || process.env.USE_AGENT_MOCKS === 'true' || !apiKey) {
+  const hasApiKeys = Boolean(process.env.GEMINI_API_KEY || process.env.NVIDIA_API_KEY);
+
+  // Mock execution path for isolated testing when mockFn provided, USE_AGENT_MOCKS is set, or no API keys present
+  if (mockFn || process.env.USE_AGENT_MOCKS === 'true' || !hasApiKeys) {
     const fallbackObj = getFallbackOutput();
     const parseResult = schema.safeParse(fallbackObj);
 
@@ -253,9 +254,10 @@ export async function executeAgent<TInput, TOutput>(
     }
   }
 
-  // Real LLM Execution path
+  // Real LLM Execution path via MultiModelRouter
   let lastError = '';
   let retryCount = 0;
+  let currentPrompt = userPrompt;
 
   if (agentName === 'CurriculumDrafter') {
     console.log(`\n============================================================`);
@@ -263,82 +265,64 @@ export async function executeAgent<TInput, TOutput>(
     console.log(systemInstruction);
     console.log(`============================================================\n`);
   }
-  const candidateModels = Array.from(new Set([modelName, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-pro'])).filter(Boolean);
-  let currentPrompt = userPrompt;
 
-  for (const activeModelName of candidateModels) {
-    const model = genAI.getGenerativeModel({
-      model: activeModelName,
-      generationConfig: {
-        temperature,
-        responseMimeType: 'application/json',
-      },
-      systemInstruction,
-    });
+  const modelProvider = getModelProvider(modelName);
 
-    retryCount = 0;
-    while (retryCount <= maxRetries) {
-      try {
-        const response = await model.generateContent(currentPrompt);
-        const rawText = response.response.text();
-        let parsedJson: unknown;
+  while (retryCount <= maxRetries) {
+    if (signal?.aborted) {
+      throw new Error(`[${agentName}] Execution aborted`);
+    }
+    try {
+      const parsedJson = await modelProvider.generateJSON<unknown>(currentPrompt, systemInstruction, signal);
+      const validationResult = schema.safeParse(parsedJson);
 
-        try {
-          parsedJson = JSON.parse(rawText);
-        } catch (jsonErr: any) {
-          throw new Error(`Invalid JSON syntax returned by model: ${jsonErr.message}`);
-        }
+      if (validationResult.success) {
+        const reasoning =
+          (parsedJson as any)?.reasoning ||
+          (parsedJson as any)?.reasoningForLog ||
+          null;
 
-        const validationResult = schema.safeParse(parsedJson);
+        const log: AgentLog = AgentLogSchema.parse({
+          logId,
+          agentName,
+          learnerId,
+          timestamp: new Date().toISOString(),
+          input: inputData as unknown,
+          output: validationResult.data as unknown,
+          reasoning,
+          validationPassed: true,
+          retryCount,
+        });
 
-        if (validationResult.success) {
-          const reasoning =
-            (parsedJson as any)?.reasoning ||
-            (parsedJson as any)?.reasoningForLog ||
-            null;
-
-          const log: AgentLog = AgentLogSchema.parse({
-            logId,
-            agentName,
-            learnerId,
-            timestamp: new Date().toISOString(),
-            input: inputData as unknown,
-            output: validationResult.data as unknown,
-            reasoning,
-            validationPassed: true,
-            retryCount,
-          });
-
-          await saveAgentLog(log);
-          const outSummary = (validationResult.data as any)?.intent
-            || (validationResult.data as any)?.currentGoal?.domain
-            || (validationResult.data as any)?.goalSummary
-            || (validationResult.data as any)?.verificationStatus
-            || '';
-          console.log(`✔  [${agentName}] DONE${outSummary ? ` → ${outSummary}` : ''} (LLM via ${activeModelName})`);
-          console.log(JSON.stringify(validationResult.data, null, 2));
-          return { output: validationResult.data, log };
-        }
-
-        lastError = validationResult.error.issues
-          .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-          .join('; ');
-
-        retryCount++;
-        currentPrompt = `${userPrompt}\n\n[PREVIOUS OUTPUT FAILED VALIDATION]\nYour previous output was invalid:\nError: ${lastError}\nPlease fix these validation errors and return ONLY a valid JSON object matching the exact schema.`;
-      } catch (err: any) {
-        lastError = err.message;
-        if (err.message?.includes('429') || err.message?.includes('Quota exceeded') || err.message?.includes('404')) {
-          console.warn(`[${agentName}] Model ${activeModelName} failed (${err.message}). Switching to next candidate model...`);
-          break; // Switch to next candidate model
-        }
-        retryCount++;
-        currentPrompt = `${userPrompt}\n\n[PREVIOUS CALL FAILED]\nError: ${lastError}\nPlease retry and return ONLY valid JSON.`;
+        await saveAgentLog(log);
+        const outSummary = (validationResult.data as any)?.intent
+          || (validationResult.data as any)?.currentGoal?.domain
+          || (validationResult.data as any)?.goalSummary
+          || (validationResult.data as any)?.verificationStatus
+          || '';
+        console.log(`✔  [${agentName}] DONE${outSummary ? ` → ${outSummary}` : ''} (via ${modelProvider.name})`);
+        console.log(JSON.stringify(validationResult.data, null, 2));
+        return { output: validationResult.data, log };
       }
+
+      lastError = validationResult.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; ');
+
+      retryCount++;
+      currentPrompt = `${userPrompt}\n\n[PREVIOUS OUTPUT FAILED VALIDATION]\nYour previous output was invalid:\nError: ${lastError}\nPlease fix these validation errors and return ONLY a valid JSON object matching the exact schema.`;
+    } catch (err: any) {
+      if (err.name === 'AbortError' || signal?.aborted) {
+        throw err;
+      }
+      lastError = err.message || String(err);
+      retryCount++;
+      currentPrompt = `${userPrompt}\n\n[PREVIOUS CALL FAILED]\nError: ${lastError}\nPlease retry and return ONLY valid JSON matching the requested schema.`;
     }
   }
 
-  // Strictly do NOT fabricate content when all candidate models fail
+  // Strictly do NOT fabricate content when all candidate model calls fail
   console.error(`❌ [${agentName}] All candidate generative models failed. Last error: ${lastError}`);
   throw new AgentGenerationFailedError(agentName, lastError || 'All candidate generative models failed to respond.');
 }
+
