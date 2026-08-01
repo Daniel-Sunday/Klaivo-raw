@@ -23,9 +23,16 @@ const projectRoot = fs.existsSync(path.join(__dirname, 'public'))
   ? __dirname
   : path.join(__dirname, '..');
 
-const uploadsDir = path.join(projectRoot, 'uploads');
+const uploadsDir = process.env.VERCEL
+  ? path.join('/tmp', 'uploads')
+  : path.join(projectRoot, 'uploads');
+
 if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+  try {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  } catch (err) {
+    console.warn('[Server] Could not create uploads directory:', err);
+  }
 }
 
 (async () => {
