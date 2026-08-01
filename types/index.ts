@@ -47,9 +47,15 @@ export interface CurriculumNode {
   edges?: CurriculumNodeEdge[];
   status: 'locked' | 'available' | 'completed' | 'active' | 'in_progress';
   order_index: number;
-  is_starred?: boolean;
   phaseIndex?: number;
   isCurrentActiveChunk?: boolean;
+  chunkId?: string;
+  depth?: number;
+  goalRelevance?: string;
+  oneLineSummary?: string;
+  estimatedTimeMinutes?: number;
+  masteryScore?: number;
+  is_starred?: boolean;
   created_at?: string;
 }
 
