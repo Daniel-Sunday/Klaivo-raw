@@ -3,6 +3,24 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+function combineAbortSignals(signalA?: AbortSignal, signalB?: AbortSignal): AbortSignal {
+  if (typeof (AbortSignal as any).any === 'function' && signalA && signalB) {
+    return (AbortSignal as any).any([signalA, signalB]);
+  }
+  if (!signalA) return signalB || new AbortController().signal;
+  if (!signalB) return signalA;
+
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (signalA.aborted || signalB.aborted) {
+    controller.abort();
+  } else {
+    signalA.addEventListener('abort', onAbort, { once: true });
+    signalB.addEventListener('abort', onAbort, { once: true });
+  }
+  return controller.signal;
+}
+
 export interface ModelProvider {
   name: string;
   generateJSON<T = any>(prompt: string, systemInstruction?: string, signal?: AbortSignal): Promise<T>;
@@ -147,9 +165,7 @@ export class NvidiaNimProvider implements ModelProvider {
       // Combine per-model timeout with the caller's abort signal so a single
       // hanging model fails fast (30s) instead of burning the full stage timeout
       const modelTimeout = AbortSignal.timeout(this.perModelTimeoutMs);
-      const combinedSignal = signal
-        ? AbortSignal.any([signal, modelTimeout])
-        : modelTimeout;
+      const combinedSignal = combineAbortSignals(signal, modelTimeout);
       try {
         const response = await fetch(this.baseUrl, {
           method: 'POST',
@@ -209,9 +225,7 @@ export class NvidiaNimProvider implements ModelProvider {
         throw new Error('[NvidiaNimProvider] Execution aborted');
       }
       const modelTimeout = AbortSignal.timeout(this.perModelTimeoutMs);
-      const combinedSignal = signal
-        ? AbortSignal.any([signal, modelTimeout])
-        : modelTimeout;
+      const combinedSignal = combineAbortSignals(signal, modelTimeout);
       try {
         const response = await fetch(this.baseUrl, {
           method: 'POST',
