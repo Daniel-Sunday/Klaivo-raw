@@ -111,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Dynamic Single-Line Time-of-Day Greeting Generator
+  // Dynamic Single-Line Time-of-Day Greeting Generator with User First Name
   function updateTimeOfDayGreeting(): void {
     const greetingTitle = document.getElementById('welcome-greeting-title');
     if (!greetingTitle) return;
@@ -124,11 +124,23 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       timeGreeting = 'Good evening';
     }
-    greetingTitle.textContent = timeGreeting;
+
+    const user = authManager.getUser();
+    if (user) {
+      const rawName = user.display_name || user.email.split('@')[0];
+      const cleanName = rawName.trim().split(' ')[0];
+      const firstName = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
+      greetingTitle.textContent = `${timeGreeting}, ${firstName}`;
+    } else {
+      greetingTitle.textContent = timeGreeting;
+    }
   }
 
-  // Initialize greeting on startup
+  // Initialize greeting on startup & subscribe to auth changes
   updateTimeOfDayGreeting();
+  authManager.onAuthStateChanged(() => {
+    updateTimeOfDayGreeting();
+  });
 
   // Collapsible section toggles
   navSessionsHeader?.addEventListener('click', () => {

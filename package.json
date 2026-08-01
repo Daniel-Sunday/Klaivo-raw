@@ -2,7 +2,7 @@
   "name": "klaivo",
   "version": "0.1.0",
   "description": "Klaivo: AI-powered adaptive learning platform MVP",
-  "main": "server.js",
+  "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",

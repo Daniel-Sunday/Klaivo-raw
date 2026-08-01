@@ -8770,7 +8770,7 @@
     updateUserNavUI() {
       const nameEl = document.getElementById("user-display-name");
       const subtextEl = document.getElementById("user-subtext");
-      const initialsEl = document.getElementById("user-avatar-initials");
+      const avatarWrapper = document.getElementById("user-avatar-wrapper");
       const popoverName = document.getElementById("popover-user-name");
       const popoverEmail = document.getElementById("popover-user-email");
       if (this.user) {
@@ -8778,13 +8778,21 @@
         const initials = displayName.slice(0, 2).toUpperCase();
         if (nameEl) nameEl.textContent = displayName;
         if (subtextEl) subtextEl.textContent = this.user.email;
-        if (initialsEl) initialsEl.textContent = initials;
+        if (avatarWrapper) {
+          if (this.user.avatar_url) {
+            avatarWrapper.innerHTML = `<img src="${this.user.avatar_url}" class="user-avatar-img" alt="${displayName}">`;
+          } else {
+            avatarWrapper.innerHTML = `<span class="user-avatar-initials" id="user-avatar-initials">${initials}</span>`;
+          }
+        }
         if (popoverName) popoverName.textContent = displayName;
         if (popoverEmail) popoverEmail.textContent = this.user.email;
       } else {
-        if (nameEl) nameEl.textContent = "Log in / Sign up";
+        if (nameEl) nameEl.textContent = "Sign in";
         if (subtextEl) subtextEl.textContent = "Save history & memory";
-        if (initialsEl) initialsEl.textContent = "?";
+        if (avatarWrapper) {
+          avatarWrapper.innerHTML = `<span class="user-avatar-initials" id="user-avatar-initials">?</span>`;
+        }
       }
     }
   };
@@ -8875,9 +8883,20 @@
       } else {
         timeGreeting = "Good evening";
       }
-      greetingTitle.textContent = timeGreeting;
+      const user = authManager.getUser();
+      if (user) {
+        const rawName = user.display_name || user.email.split("@")[0];
+        const cleanName = rawName.trim().split(" ")[0];
+        const firstName = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
+        greetingTitle.textContent = `${timeGreeting}, ${firstName}`;
+      } else {
+        greetingTitle.textContent = timeGreeting;
+      }
     }
     updateTimeOfDayGreeting();
+    authManager.onAuthStateChanged(() => {
+      updateTimeOfDayGreeting();
+    });
     navSessionsHeader?.addEventListener("click", () => {
       navSessionsGroup.classList.toggle("collapsed");
     });
