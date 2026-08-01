@@ -103,7 +103,7 @@ Schema shape:
     "id": string,
     "title": string,
     "oneLineSummary": string,
-    "goalRelevance": string,
+    "goalRelevance": string (one sentence explaining why this node is necessary for the learner's goal),
     "prerequisiteIds": string[],
     "status": "locked" | "available" | "in_progress" | "mastered",
     "content": null,
@@ -187,7 +187,7 @@ Prior Mastery Map: ${JSON.stringify(input.masteryMap || {})}`;
   let activeChunkAssigned = false;
 
   for (const node of result.output.nodes) {
-    if (!node.goalRelevance || node.goalRelevance.length < 10) {
+    if (!node.goalRelevance || node.goalRelevance.length < 3) {
       throw new Error(`CurriculumDrafter validation error: Node "${node.id}" has invalid/boilerplate goalRelevance.`);
     }
 

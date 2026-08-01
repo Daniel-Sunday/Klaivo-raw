@@ -39,18 +39,6 @@ export class ConceptCanvas {
     this.initEvents();
   }
 
-  /** Set rank direction for Dagre layout ('BT' for Bottom-to-Top, 'LR' for Left-to-Right) */
-  public setRankDir(dir: 'BT' | 'LR'): void {
-    this.rankDir = dir;
-    if (this.nodes && this.nodes.length > 0) {
-      this.render(this.nodes, false);
-    }
-  }
-
-  public getRankDir(): 'BT' | 'LR' {
-    return this.rankDir;
-  }
-
   /** Initialize SVG Defs (Patterns, Gradients, Filters) */
   private initDefs(): void {
     if (!this.svg) return;

@@ -73,8 +73,18 @@ export class GeminiProvider implements ModelProvider {
  */
 export function cleanJsonOutput(raw: string): string {
   let cleaned = raw.trim();
-  if (cleaned.startsWith('```')) {
-    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  // 1. Strip markdown code fences if present anywhere
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlockMatch && codeBlockMatch[1]) {
+    cleaned = codeBlockMatch[1].trim();
+  }
+  // 2. Extract outermost JSON object { ... } or array [ ... ] if surrounded by explanatory text
+  if (!cleaned.startsWith('{') && !cleaned.startsWith('[')) {
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+    }
   }
   return cleaned;
 }
@@ -91,14 +101,17 @@ export class NvidiaNimProvider implements ModelProvider {
   private baseUrl = 'https://integrate.api.nvidia.com/v1/chat/completions';
 
   // Fallback candidate sequence ordered by reliability and reasoning capability
+  // Removed: meta/llama-3.3-70b-instruct (hangs forever, deprecated on NVIDIA)
+  // Removed: nvidia/llama-3.1-nemotron-70b-instruct (404 Not Found, delisted)
   private fallbackModels = [
-    'meta/llama-3.1-70b-instruct',
-    'meta/llama-3.3-70b-instruct',
     'meta/llama-3.1-8b-instruct',
-    'nvidia/llama-3.1-nemotron-70b-instruct'
+    'meta/llama-3.1-70b-instruct',
   ];
 
-  constructor(apiKey?: string, modelName = 'meta/llama-3.1-70b-instruct') {
+  // Per-model timeout (30s) prevents one hanging model from consuming the entire stage timeout
+  private perModelTimeoutMs = 30_000;
+
+  constructor(apiKey?: string, modelName = 'meta/llama-3.1-8b-instruct') {
     this.apiKey = apiKey || process.env.NVIDIA_API_KEY || '';
     this.primaryModel = modelName;
   }
@@ -131,6 +144,12 @@ export class NvidiaNimProvider implements ModelProvider {
       if (signal?.aborted) {
         throw new Error('[NvidiaNimProvider] Execution aborted');
       }
+      // Combine per-model timeout with the caller's abort signal so a single
+      // hanging model fails fast (30s) instead of burning the full stage timeout
+      const modelTimeout = AbortSignal.timeout(this.perModelTimeoutMs);
+      const combinedSignal = signal
+        ? AbortSignal.any([signal, modelTimeout])
+        : modelTimeout;
       try {
         const response = await fetch(this.baseUrl, {
           method: 'POST',
@@ -144,7 +163,7 @@ export class NvidiaNimProvider implements ModelProvider {
             temperature: 0.2,
             max_tokens: 4096,
           }),
-          signal,
+          signal: combinedSignal,
         });
 
         if (!response.ok) {
@@ -157,10 +176,13 @@ export class NvidiaNimProvider implements ModelProvider {
         const cleaned = cleanJsonOutput(rawContent);
         return JSON.parse(cleaned) as T;
       } catch (err: any) {
-        if (err.name === 'AbortError' || signal?.aborted) {
+        // If the caller's signal was aborted, propagate immediately (stage timeout)
+        if (signal?.aborted) {
           throw err;
         }
-        console.warn(`[NvidiaNimProvider] Model candidate '${model}' failed: ${err.message}. Trying next candidate...`);
+        // If only the per-model timeout fired, log and try next candidate
+        const isModelTimeout = err.name === 'AbortError' || err.name === 'TimeoutError';
+        console.warn(`[NvidiaNimProvider] Model candidate '${model}' failed: ${err.message}${isModelTimeout ? ` (per-model ${this.perModelTimeoutMs / 1000}s timeout)` : ''}. Trying next candidate...`);
         lastError = err;
       }
     }
@@ -186,6 +208,10 @@ export class NvidiaNimProvider implements ModelProvider {
       if (signal?.aborted) {
         throw new Error('[NvidiaNimProvider] Execution aborted');
       }
+      const modelTimeout = AbortSignal.timeout(this.perModelTimeoutMs);
+      const combinedSignal = signal
+        ? AbortSignal.any([signal, modelTimeout])
+        : modelTimeout;
       try {
         const response = await fetch(this.baseUrl, {
           method: 'POST',
@@ -199,7 +225,7 @@ export class NvidiaNimProvider implements ModelProvider {
             temperature: 0.3,
             max_tokens: 4096,
           }),
-          signal,
+          signal: combinedSignal,
         });
 
         if (!response.ok) {
@@ -214,10 +240,11 @@ export class NvidiaNimProvider implements ModelProvider {
         }
         throw new Error('Invalid or missing response content structure');
       } catch (err: any) {
-        if (err.name === 'AbortError' || signal?.aborted) {
+        if (signal?.aborted) {
           throw err;
         }
-        console.warn(`[NvidiaNimProvider] Model candidate '${model}' failed: ${err.message}. Trying next candidate...`);
+        const isModelTimeout = err.name === 'AbortError' || err.name === 'TimeoutError';
+        console.warn(`[NvidiaNimProvider] Model candidate '${model}' failed: ${err.message}${isModelTimeout ? ` (per-model ${this.perModelTimeoutMs / 1000}s timeout)` : ''}. Trying next candidate...`);
         lastError = err;
       }
     }
@@ -311,15 +338,20 @@ export class MultiModelRouter implements ModelProvider {
     let lastError: any = null;
     const now = Date.now();
 
-    for (const provider of this.providers) {
+    let candidateProviders = this.providers.filter((p) => {
+      const lastFailure = providerFailureTimestamps.get(p.name) || 0;
+      return now - lastFailure >= CIRCUIT_BREAKER_COOLDOWN_MS;
+    });
+
+    if (candidateProviders.length === 0) {
+      console.warn(`[MultiModelRouter] All providers were on circuit breaker cooldown. Resetting circuit breaker to attempt recovery...`);
+      providerFailureTimestamps.clear();
+      candidateProviders = this.providers;
+    }
+
+    for (const provider of candidateProviders) {
       if (signal?.aborted) {
         throw new Error('[MultiModelRouter] Execution aborted');
-      }
-
-      const lastFailure = providerFailureTimestamps.get(provider.name) || 0;
-      if (now - lastFailure < CIRCUIT_BREAKER_COOLDOWN_MS) {
-        console.warn(`[MultiModelRouter] Skipping provider '${provider.name}' due to circuit breaker cooldown (${Math.round((CIRCUIT_BREAKER_COOLDOWN_MS - (now - lastFailure)) / 1000)}s remaining).`);
-        continue;
       }
 
       try {
@@ -342,15 +374,20 @@ export class MultiModelRouter implements ModelProvider {
     let lastError: any = null;
     const now = Date.now();
 
-    for (const provider of this.providers) {
+    let candidateProviders = this.providers.filter((p) => {
+      const lastFailure = providerFailureTimestamps.get(p.name) || 0;
+      return now - lastFailure >= CIRCUIT_BREAKER_COOLDOWN_MS;
+    });
+
+    if (candidateProviders.length === 0) {
+      console.warn(`[MultiModelRouter] All providers were on circuit breaker cooldown. Resetting circuit breaker to attempt recovery...`);
+      providerFailureTimestamps.clear();
+      candidateProviders = this.providers;
+    }
+
+    for (const provider of candidateProviders) {
       if (signal?.aborted) {
         throw new Error('[MultiModelRouter] Execution aborted');
-      }
-
-      const lastFailure = providerFailureTimestamps.get(provider.name) || 0;
-      if (now - lastFailure < CIRCUIT_BREAKER_COOLDOWN_MS) {
-        console.warn(`[MultiModelRouter] Skipping provider '${provider.name}' due to circuit breaker cooldown (${Math.round((CIRCUIT_BREAKER_COOLDOWN_MS - (now - lastFailure)) / 1000)}s remaining).`);
-        continue;
       }
 
       try {

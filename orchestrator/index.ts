@@ -23,6 +23,7 @@ import { runMemoryUpdateAgent } from '../agents/memoryUpdateAgent';
 import { runRefinementAgent } from '../agents/refinementAgent';
 import { runReflectionAgent } from '../agents/reflectionAgent';
 import { createStarterSkeleton, sanitizeRefinementDiff, sanitizeUserErrorMessage } from '../utils/errorHandling';
+import { fetchUniversalDomainResearch } from '../utils/agentTools';
 
 export interface AgentProgressEvent {
   agent:
@@ -310,6 +311,21 @@ export class KlaivoOrchestrator {
       contextArtifacts,
     };
 
+    // Step 2.5: Universal Real-World Domain Research Pass
+    let researchReferenceText = '';
+    try {
+      if (onProgress) {
+        onProgress({ agent: 'CurriculumDrafter', status: 'started', thought: `Researching real-world rubrics & syllabi for "${learnerState.currentGoal.domain}"...` });
+      }
+      const research = await fetchUniversalDomainResearch(
+        learnerState.currentGoal.domain,
+        learnerState.currentGoal.specificObjective
+      );
+      researchReferenceText = research.referenceText;
+    } catch (researchErr: any) {
+      console.warn('[Orchestrator] Domain research notice:', researchErr.message);
+    }
+
     // Step 3: Curriculum Drafter with Phase 4 Fallback
     const treeId = `tree_${Date.now()}`;
     let skeleton: TreeSkeleton;
@@ -365,8 +381,8 @@ export class KlaivoOrchestrator {
     try {
       const verifierResult = await runStageWithTimeoutAndRetry(
         'CurriculumVerifier',
-        (signal) => runCurriculumVerifier({ skeleton }, undefined, signal),
-        45000,
+        (signal) => runCurriculumVerifier({ skeleton, referenceSourceText: researchReferenceText }, undefined, signal),
+        90000,
         onProgress
       );
       skeleton = verifierResult.output;
