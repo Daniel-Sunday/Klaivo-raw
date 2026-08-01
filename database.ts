@@ -20,12 +20,16 @@ const isSupabaseConfigured =
 let supabase: SupabaseClient | null = null;
 let sqliteDb: any = null;
 
-const projectRoot = fs.existsSync(path.join(__dirname, 'public'))
-  ? __dirname
-  : path.join(__dirname, '..');
-const dbPath = path.join(projectRoot, 'klaivo.db');
-sqliteDb = new DatabaseConstructor(dbPath, { verbose: console.log });
-sqliteDb.pragma('foreign_keys = ON');
+try {
+  const projectRoot = fs.existsSync(path.join(__dirname, 'public'))
+    ? __dirname
+    : path.join(__dirname, '..');
+  const dbPath = process.env.VERCEL ? '/tmp/klaivo.db' : path.join(projectRoot, 'klaivo.db');
+  sqliteDb = new DatabaseConstructor(dbPath, { verbose: console.log });
+  sqliteDb.pragma('foreign_keys = ON');
+} catch (err) {
+  console.warn('[Database] SQLite initialization notice:', err);
+}
 
 if (isSupabaseConfigured) {
   supabase = createClient(supabaseUrl!, supabaseServiceRoleKey!);

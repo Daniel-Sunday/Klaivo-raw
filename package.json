@@ -4,7 +4,7 @@
   "description": "Klaivo: AI-powered adaptive learning platform MVP",
   "main": "dist/server.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run build:client",
     "start": "node dist/server.js",
     "dev": "tsc && node dist/server.js",
     "build:client": "esbuild public/js/app.ts --bundle --outfile=public/js/app.js --sourcemap",
