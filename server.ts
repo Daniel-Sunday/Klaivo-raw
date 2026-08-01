@@ -1260,6 +1260,10 @@ app.use((err: any, req: Request, res: Response, next: any) => {
   });
 });
 
-app.listen(port, () => {
-  console.log(`Klaivo Express backend running on http://localhost:${port}`);
-});
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`Klaivo Express backend running on http://localhost:${port}`);
+  });
+}
+
+export default app;
