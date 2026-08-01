@@ -48,6 +48,8 @@ export interface CurriculumNode {
   status: 'locked' | 'available' | 'completed' | 'active' | 'in_progress';
   order_index: number;
   is_starred?: boolean;
+  phaseIndex?: number;
+  isCurrentActiveChunk?: boolean;
   created_at?: string;
 }
 
