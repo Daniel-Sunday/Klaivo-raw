@@ -169,6 +169,17 @@ async function buildLearnerState(sessionId: string, session: any): Promise<Learn
 
 // --- API ROUTES ---
 
+/**
+ * GET /api/health: Service Health & Diagnostic Check
+ */
+app.get('/api/health', (req: Request, res: Response) => {
+  return res.json({
+    status: 'ok',
+    service: 'klaivo-engine',
+    timestamp: new Date().toISOString(),
+  });
+});
+
 async function getAuthUser(req: Request): Promise<any | null> {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
