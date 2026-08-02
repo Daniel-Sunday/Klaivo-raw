@@ -540,12 +540,18 @@ export async function getMessages(sessionId: string, nodeId?: string | null): Pr
 export async function deleteSession(sessionId: string): Promise<void> {
   if (supabase) {
     try {
+      await supabase.from('messages').delete().eq('session_id', sessionId);
+      await supabase.from('nodes').delete().eq('session_id', sessionId);
       await supabase.from('sessions').delete().eq('id', sessionId);
     } catch (_) {}
   }
   if (sqliteDb) {
     sqliteDb.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
     sqliteDb.prepare('DELETE FROM nodes WHERE session_id = ?').run(sessionId);
+    sqliteDb.prepare('DELETE FROM session_artifacts WHERE session_id = ?').run(sessionId);
+    sqliteDb.prepare('DELETE FROM vector_embeddings WHERE session_id = ?').run(sessionId);
+    sqliteDb.prepare('DELETE FROM task_simulations WHERE session_id = ?').run(sessionId);
+    sqliteDb.prepare('DELETE FROM evidence_scores WHERE session_id = ?').run(sessionId);
     sqliteDb.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
   }
 }

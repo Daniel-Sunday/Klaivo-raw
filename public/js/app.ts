@@ -12,6 +12,15 @@ document.addEventListener('DOMContentLoaded', () => {
   let nodes: CurriculumNode[] = [];
   let selectedFiles: File[] = [];
 
+  // --- Client-Side Multi-Layer Session Cache ---
+  interface CachedSessionData {
+    session: any;
+    nodes: CurriculumNode[];
+    messages: Message[];
+    nodeChats: Map<string, Message[]>;
+  }
+  const sessionCacheMap = new Map<string, CachedSessionData>();
+
   authManager.initUI(() => {
     loadNavigationHistory();
   });
@@ -160,6 +169,9 @@ document.addEventListener('DOMContentLoaded', () => {
     nodes = [];
     selectedFiles = [];
 
+    localStorage.removeItem('klaivo_current_session_id');
+    localStorage.removeItem('klaivo_current_node_id');
+
     canvas.render([]);
     welcomeInput.value = '';
     welcomeInput.style.height = 'auto';
@@ -296,10 +308,14 @@ document.addEventListener('DOMContentLoaded', () => {
                   try {
                     const updateRes = await fetch(`/api/sessions/${sess.id}`, {
                       method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
+                      headers: {
+                        'Content-Type': 'application/json',
+                        ...authManager.getAuthHeaders(),
+                      },
                       body: JSON.stringify({ title: newTitle.trim() })
                     });
                     if (updateRes.ok) {
+                      sessionCacheMap.delete(sess.id);
                       if (sess.id === sessionId && sidebarNodeTitle) {
                         sidebarNodeTitle.textContent = toSentenceCase(newTitle.trim());
                       }
@@ -318,8 +334,12 @@ document.addEventListener('DOMContentLoaded', () => {
               onClick: async () => {
                 if (confirm(`Delete "${displayTitle}"?`)) {
                   try {
-                    const delRes = await fetch(`/api/sessions/${sess.id}`, { method: 'DELETE' });
+                    const delRes = await fetch(`/api/sessions/${sess.id}`, {
+                      method: 'DELETE',
+                      headers: authManager.getAuthHeaders(),
+                    });
                     if (delRes.ok) {
+                      sessionCacheMap.delete(sess.id);
                       if (sess.id === sessionId) {
                         resetToWelcomeScreen();
                       } else {
@@ -377,10 +397,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // 2. Render History section (Chronological node chats with Star + Delete)
       navHistoryList.innerHTML = '';
-      const allNodeChats: Array<{ sessionId: string; sessionTitle: string; node: CurriculumNode }> = [];
+      const allNodeChats: Array<{ sessionId: string; sessionTitle: string; node: any }> = [];
       sessions.forEach((sess: any) => {
         if (sess.nodes) {
-          sess.nodes.forEach((n: CurriculumNode) => {
+          sess.nodes.forEach((n: any) => {
             if (n.status !== 'locked') {
               allNodeChats.push({ sessionId: sess.id, sessionTitle: sess.title, node: n });
             }
@@ -389,12 +409,13 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       if (allNodeChats.length === 0) {
-        navHistoryList.innerHTML = `<div class="nav-item-sub" style="padding: 6px 8px;">No recent chats</div>`;
+        navHistoryList.innerHTML = `<div class="nav-item-sub" style="padding: 6px 8px;">No active topics yet</div>`;
       } else {
-        allNodeChats.slice(0, 20).forEach(chat => {
+        allNodeChats.forEach((chat) => {
           const item = document.createElement('div');
+          const isStarred = Boolean(chat.node.is_starred);
           item.className = `nav-item ${chat.sessionId === sessionId && chat.node.id === activeNodeId ? 'active' : ''}`;
-          const isStarred = !!chat.node.is_starred;
+
           const starIcon = isStarred ? `<span class="nav-item-star-icon" title="Starred">★</span>` : '';
           const nodeTitle = toSentenceCase(chat.node.title);
           item.innerHTML = `<div class="nav-item-title-container">${starIcon}<div class="nav-item-title">${nodeTitle}</div></div>`;
@@ -413,7 +434,10 @@ document.addEventListener('DOMContentLoaded', () => {
                   try {
                     const starRes = await fetch(`/api/sessions/${chat.sessionId}/nodes/${chat.node.id}/star`, {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
+                      headers: {
+                        'Content-Type': 'application/json',
+                        ...authManager.getAuthHeaders(),
+                      },
                       body: JSON.stringify({ isStarred: !isStarred })
                     });
                     if (starRes.ok) {
@@ -430,8 +454,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 onClick: async () => {
                   if (confirm(`Reset conversation thread for "${nodeTitle}"?\n\nThis will clear chat history for this concept node so you can re-learn it from scratch.`)) {
                     try {
-                      const resetRes = await fetch(`/api/sessions/${chat.sessionId}/nodes/${chat.node.id}/reset`, { method: 'POST' });
+                      const resetRes = await fetch(`/api/sessions/${chat.sessionId}/nodes/${chat.node.id}/reset`, {
+                        method: 'POST',
+                        headers: authManager.getAuthHeaders(),
+                      });
                       if (resetRes.ok) {
+                        sessionCacheMap.delete(chat.sessionId);
                         if (chat.sessionId === sessionId && chat.node.id === activeNodeId) {
                           chatHistory.innerHTML = '';
                         }
@@ -451,6 +479,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
 
+      // Auto-restore active session from localStorage if present and not currently open
+      const savedSessionId = localStorage.getItem('klaivo_current_session_id');
+      const savedNodeId = localStorage.getItem('klaivo_current_node_id');
+      if (!sessionId && savedSessionId && sessions.some((s: any) => s.id === savedSessionId)) {
+        openSessionAndNode(savedSessionId, savedNodeId || null);
+      }
+
     } catch (err) {
       console.error('Error loading navigation history:', err);
     }
@@ -458,12 +493,34 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function openSessionAndNode(sessId: string, nodeId: string | null): Promise<void> {
     try {
-      const res = await fetch(`/api/sessions/${sessId}`);
-      if (!res.ok) return;
-      const data = await res.json();
+      localStorage.setItem('klaivo_current_session_id', sessId);
+      if (nodeId) {
+        localStorage.setItem('klaivo_current_node_id', nodeId);
+      } else {
+        localStorage.removeItem('klaivo_current_node_id');
+      }
+
+      let data: any = null;
+      if (sessionCacheMap.has(sessId)) {
+        data = sessionCacheMap.get(sessId)!;
+      } else {
+        const res = await fetch(`/api/sessions/${sessId}`, {
+          headers: authManager.getAuthHeaders(),
+        });
+        if (!res.ok) return;
+        data = await res.json();
+        sessionCacheMap.set(sessId, data);
+      }
+
+      // Async background revalidation
+      fetch(`/api/sessions/${sessId}`, {
+        headers: authManager.getAuthHeaders(),
+      }).then(r => r.ok ? r.json() : null).then(freshData => {
+        if (freshData) sessionCacheMap.set(sessId, freshData);
+      }).catch(() => {});
 
       sessionId = sessId;
-      calibration = data.session.calibration.level;
+      calibration = data.session.calibration?.level || 'Intermediate';
       nodes = data.nodes || [];
 
       if (headerCalibration) headerCalibration.textContent = calibration;
@@ -487,7 +544,11 @@ document.addEventListener('DOMContentLoaded', () => {
           if (targetNode.status !== 'completed') {
             targetNode.status = 'in_progress';
           }
-          await fetch(`/api/sessions/${sessId}/nodes/${targetNode.id}/open`, { method: 'POST' }).catch(() => {});
+          await fetch(`/api/sessions/${sessId}/nodes/${targetNode.id}/open`, {
+            method: 'POST',
+            headers: authManager.getAuthHeaders(),
+          }).catch(() => {});
+
           if (sidebarNodeTitle) sidebarNodeTitle.textContent = toSentenceCase(targetNode.title);
           if (sidebarNodeStatus) {
             sidebarNodeStatus.textContent = targetNode.status.toUpperCase();
@@ -499,11 +560,13 @@ document.addEventListener('DOMContentLoaded', () => {
           document.getElementById(`node-group-${targetNode.id}`)?.classList.add('active');
 
           chatHistory.innerHTML = '';
-          const chatRes = await fetch(`/api/sessions/${sessId}/nodes/${targetNode.id}/chat`);
+          const chatRes = await fetch(`/api/sessions/${sessId}/nodes/${targetNode.id}/chat`, {
+            headers: authManager.getAuthHeaders(),
+          });
           if (requestId !== currentNodeOpenRequestId || activeNodeId !== targetNode.id) return;
 
           if (chatRes.ok) {
-            const historyMsgs: Message[] = await chatRes.json();
+            const historyMsgs: any[] = await chatRes.json();
             if (requestId !== currentNodeOpenRequestId || activeNodeId !== targetNode.id) return;
 
             historyMsgs.forEach(msg => appendMessage(msg.sender, msg.content, targetNode.id));
@@ -1126,7 +1189,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (node.status !== 'completed') {
       node.status = 'in_progress';
     }
-    await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/open`, { method: 'POST' }).catch(() => {});
+    await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/open`, {
+      method: 'POST',
+      headers: authManager.getAuthHeaders(),
+    }).catch(() => {});
     await loadNavigationHistory();
 
     if (sidebarNodeTitle) sidebarNodeTitle.textContent = node.title;
@@ -1140,7 +1206,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const thinkingWrapper = appendMessage('assistant', '<div class="thinking-dots"><span></span><span></span><span></span></div>', node.id);
 
     try {
-      const chatResponse = await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/chat`);
+      const chatResponse = await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/chat`, {
+        headers: authManager.getAuthHeaders(),
+      });
       if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
 
       if (chatResponse.ok) {
@@ -1158,7 +1226,9 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const streamUrl = `/api/sessions/${sessionId}/nodes/${node.id}/teach`;
-      const response = await fetch(streamUrl);
+      const response = await fetch(streamUrl, {
+        headers: authManager.getAuthHeaders(),
+      });
       if (requestId !== currentNodeOpenRequestId || activeNodeId !== node.id) return;
       if (!response.ok) throw new Error('Teaching agent failed');
 
@@ -1236,14 +1306,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById(`launch-task-btn-${node.id}`)?.addEventListener('click', async () => {
       try {
-        const res = await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/task-simulation`, { method: 'POST' });
+        const res = await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/task-simulation`, {
+          method: 'POST',
+          headers: authManager.getAuthHeaders(),
+        });
         if (!res.ok) return;
         const { task } = await res.json();
 
         taskSandbox.render(task, async (submission: string) => {
           const evalRes = await fetch(`/api/sessions/${sessionId}/nodes/${node.id}/evaluate-task`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...authManager.getAuthHeaders(),
+            },
             body: JSON.stringify({ submission, taskSpec: task }),
           });
 
@@ -1283,7 +1359,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadGlobalChat(): Promise<void> {
     try {
-      const response = await fetch(`/api/sessions/${sessionId}`);
+      const response = await fetch(`/api/sessions/${sessionId}`, {
+        headers: authManager.getAuthHeaders(),
+      });
       if (response.ok) {
         const data = await response.json();
         if (data.messages && data.messages.length > 0) {
@@ -1328,7 +1406,10 @@ document.addEventListener('DOMContentLoaded', () => {
         // ── Node teaching context ──
         const response = await fetch(`/api/sessions/${sessionId}/nodes/${activeNodeId}/message`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...authManager.getAuthHeaders(),
+          },
           body: JSON.stringify({ answer: text, text: text, content: text, message: text })
         });
         if (!response.ok) {
