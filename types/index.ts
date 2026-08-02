@@ -1,5 +1,3 @@
-declare module 'better-sqlite3';
-
 // Export all Phase 1 Agentic Architecture Schemas & Types
 export * from '../schemas';
 
