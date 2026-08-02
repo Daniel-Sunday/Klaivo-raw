@@ -23,9 +23,16 @@ const projectRoot = fs.existsSync(path.join(__dirname, 'public'))
   ? __dirname
   : path.join(__dirname, '..');
 
-const uploadsDir = path.join(projectRoot, 'uploads');
+const uploadsDir = process.env.VERCEL
+  ? path.join('/tmp', 'uploads')
+  : path.join(projectRoot, 'uploads');
+
 if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+  try {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  } catch (err) {
+    console.warn('[Server] Could not create uploads directory:', err);
+  }
 }
 
 (async () => {
@@ -168,6 +175,17 @@ async function buildLearnerState(sessionId: string, session: any): Promise<Learn
 }
 
 // --- API ROUTES ---
+
+/**
+ * GET /api/health: Service Health & Diagnostic Check
+ */
+app.get('/api/health', (req: Request, res: Response) => {
+  return res.json({
+    status: 'ok',
+    service: 'klaivo-engine',
+    timestamp: new Date().toISOString(),
+  });
+});
 
 async function getAuthUser(req: Request): Promise<any | null> {
   const authHeader = req.headers.authorization;
@@ -1260,6 +1278,10 @@ app.use((err: any, req: Request, res: Response, next: any) => {
   });
 });
 
-app.listen(port, () => {
-  console.log(`Klaivo Express backend running on http://localhost:${port}`);
-});
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`Klaivo Express backend running on http://localhost:${port}`);
+  });
+}
+
+export default app;

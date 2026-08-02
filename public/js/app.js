@@ -9606,7 +9606,9 @@ This will clear chat history for this concept node so you can re-learn it from s
         });
         if (!finalData) throw new Error("Session creation stream ended unexpectedly.");
         sessionId = finalData.sessionId;
-        localStorage.setItem("klaivo_current_session_id", sessionId);
+        if (sessionId) {
+          localStorage.setItem("klaivo_current_session_id", sessionId);
+        }
         calibration = finalData.calibration?.level || "intermediate";
         thinkingWrapper.remove();
         if (headerCalibration) headerCalibration.textContent = calibration;

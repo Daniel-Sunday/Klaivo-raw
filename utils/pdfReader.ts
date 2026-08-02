@@ -1,19 +1,26 @@
+import pdfParse from 'pdf-parse-fork';
 import * as fs from 'fs';
-import pdf from 'pdf-parse';
 
 /**
- * Extracts raw text from a PDF file using pdf-parse.
+ * Production-Grade PDF Text Extractor
+ * Accepts either a file path or a Buffer directly.
+ * Pure memory-buffer extraction without legacy fs.promises side-effects.
  */
-export async function extractTextFromPdf(filePath: string): Promise<string> {
+export async function extractTextFromPdf(filePathOrBuffer: string | Buffer): Promise<string> {
   try {
-    if (!fs.existsSync(filePath)) {
-      throw new Error(`File does not exist at path: ${filePath}`);
+    let dataBuffer: Buffer;
+    if (typeof filePathOrBuffer === 'string') {
+      if (!fs.existsSync(filePathOrBuffer)) {
+        return '';
+      }
+      dataBuffer = fs.readFileSync(filePathOrBuffer);
+    } else {
+      dataBuffer = filePathOrBuffer;
     }
-    const dataBuffer = fs.readFileSync(filePath);
-    const data = await pdf(dataBuffer);
-    return data.text || '';
-  } catch (error) {
-    console.error('[pdfReader] Error reading PDF file:', error);
-    throw error;
+    const data = await pdfParse(dataBuffer);
+    return data && data.text ? data.text.trim() : '';
+  } catch (error: any) {
+    console.error('[pdfReader] Extraction failed:', error.message || error);
+    return '';
   }
 }

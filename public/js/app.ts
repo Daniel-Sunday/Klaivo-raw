@@ -1035,7 +1035,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!finalData) throw new Error('Session creation stream ended unexpectedly.');
 
       sessionId     = finalData.sessionId;
-      localStorage.setItem('klaivo_current_session_id', sessionId);
+      if (sessionId) {
+        localStorage.setItem('klaivo_current_session_id', sessionId);
+      }
       calibration   = finalData.calibration?.level || 'intermediate';
 
       thinkingWrapper.remove();
@@ -1461,7 +1463,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Constitution Section 7.2: Update Header Mastery Progress Ring SVG
-    const masteryPath = document.getElementById('header-mastery-progress-path') as SVGPathElement;
+    const masteryPath = document.getElementById('header-mastery-progress-path') as unknown as SVGPathElement;
     const masteryText = document.getElementById('header-mastery-text');
     const masteryWrapper = document.querySelector('.mastery-ring-wrapper');
 
