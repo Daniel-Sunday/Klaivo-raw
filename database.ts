@@ -199,7 +199,7 @@ export async function createSession(
   const slotJson = sessionObj.slot_state ? JSON.stringify(sessionObj.slot_state) : null;
   if (supabase) {
     try {
-      await supabase.from('sessions').insert({
+      const { error } = await supabase.from('sessions').upsert({
         id: sessionObj.id,
         user_id: sessionObj.user_id || null,
         title: sessionObj.title,
@@ -208,7 +208,12 @@ export async function createSession(
         calibration: calJson,
         slot_state: slotJson,
       });
-    } catch (_) {}
+      if (error) {
+        console.error('[Database] Supabase createSession error:', error.message, error.details, error.code);
+      }
+    } catch (err: any) {
+      console.error('[Database] Supabase createSession exception:', err?.message || err);
+    }
   }
   if (sqliteDb) {
     sqliteDb
@@ -223,6 +228,9 @@ export async function getSession(id: string): Promise<Session | null> {
   if (supabase) {
     try {
       const { data, error } = await supabase.from('sessions').select('*').eq('id', id).single();
+      if (error && error.code !== 'PGRST116') {
+        console.error('[Database] Supabase getSession error:', error.message, error.details);
+      }
       if (!error && data) {
         return {
           ...data,
@@ -230,7 +238,9 @@ export async function getSession(id: string): Promise<Session | null> {
           slot_state: data.slot_state ? (typeof data.slot_state === 'string' ? JSON.parse(data.slot_state) : data.slot_state) : undefined,
         };
       }
-    } catch (_) {}
+    } catch (err: any) {
+      console.error('[Database] Supabase getSession exception:', err?.message || err);
+    }
   }
   if (!sqliteDb) return null;
   const row = sqliteDb.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
@@ -252,8 +262,13 @@ export async function updateSession(id: string, updates: Partial<Omit<Session, '
   }
   if (supabase) {
     try {
-      await supabase.from('sessions').update(dbUpdates).eq('id', id);
-    } catch (_) {}
+      const { error } = await supabase.from('sessions').update(dbUpdates).eq('id', id);
+      if (error) {
+        console.error('[Database] Supabase updateSession error:', error.message, error.details);
+      }
+    } catch (err: any) {
+      console.error('[Database] Supabase updateSession exception:', err?.message || err);
+    }
   }
   if (sqliteDb) {
     const fields = Object.keys(dbUpdates)
@@ -306,7 +321,9 @@ export async function getSessions(userId?: string): Promise<Session[]> {
         query = query.eq('user_id', userId);
       }
       const { data, error } = await query.order('created_at', { ascending: false });
-      if (!error && data && data.length > 0) {
+      if (error) {
+        console.error('[Database] Supabase getSessions error:', error.message, error.details);
+      } else if (data) {
         const supabaseSessions = data.map((row: any) => ({
           ...row,
           calibration: typeof row.calibration === 'string' ? JSON.parse(row.calibration) : row.calibration,
@@ -324,7 +341,9 @@ export async function getSessions(userId?: string): Promise<Session[]> {
           new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
         );
       }
-    } catch (_) {}
+    } catch (err: any) {
+      console.error('[Database] Supabase getSessions exception:', err?.message || err);
+    }
   }
 
   return sqliteSessions;
@@ -354,8 +373,13 @@ export async function saveNodes(sessionId: string, nodes: Omit<CurriculumNode, '
         status: node.status,
         order_index: node.order_index,
       }));
-      await supabase.from('nodes').upsert(rows);
-    } catch (_) {}
+      const { error } = await supabase.from('nodes').upsert(rows);
+      if (error) {
+        console.error('[Database] Supabase saveNodes error:', error.message, error.details);
+      }
+    } catch (err: any) {
+      console.error('[Database] Supabase saveNodes exception:', err?.message || err);
+    }
   }
 
   if (sqliteDb) {
@@ -418,7 +442,9 @@ export async function getNodes(sessionId: string): Promise<CurriculumNode[]> {
         .select('*')
         .eq('session_id', sessionId)
         .order('order_index', { ascending: true });
-      if (!error && data && data.length > 0) {
+      if (error) {
+        console.error('[Database] Supabase getNodes error:', error.message, error.details);
+      } else if (data) {
         const supabaseNodes = data.map((row: any) => ({
           ...row,
           dependencies: typeof row.dependencies === 'string' ? JSON.parse(row.dependencies) : row.dependencies,
@@ -432,7 +458,9 @@ export async function getNodes(sessionId: string): Promise<CurriculumNode[]> {
         }
         return Array.from(nodeMap.values()).sort((a, b) => a.order_index - b.order_index);
       }
-    } catch (_) {}
+    } catch (err: any) {
+      console.error('[Database] Supabase getNodes exception:', err?.message || err);
+    }
   }
   return sqliteNodes;
 }
@@ -440,12 +468,17 @@ export async function getNodes(sessionId: string): Promise<CurriculumNode[]> {
 export async function updateNodeStatus(sessionId: string, nodeId: string, status: string): Promise<void> {
   if (supabase) {
     try {
-      await supabase
+      const { error } = await supabase
         .from('nodes')
         .update({ status })
         .eq('session_id', sessionId)
         .eq('id', nodeId);
-    } catch (_) {}
+      if (error) {
+        console.error('[Database] Supabase updateNodeStatus error:', error.message, error.details);
+      }
+    } catch (err: any) {
+      console.error('[Database] Supabase updateNodeStatus exception:', err?.message || err);
+    }
   }
   if (sqliteDb) {
     sqliteDb
@@ -467,13 +500,18 @@ export async function createMessage(
   }
   if (supabase) {
     try {
-      await supabase.from('messages').insert({
+      const { error } = await supabase.from('messages').insert({
         session_id: sessionId,
         node_id: nodeId,
         sender,
         content,
       });
-    } catch (_) {}
+      if (error) {
+        console.error('[Database] Supabase createMessage error:', error.message, error.details);
+      }
+    } catch (err: any) {
+      console.error('[Database] Supabase createMessage exception:', err?.message || err);
+    }
   }
   let lastId: any = Date.now();
   if (sqliteDb) {
@@ -520,7 +558,9 @@ export async function getMessages(sessionId: string, nodeId?: string | null): Pr
         }
       }
       const { data, error } = await query.order('created_at', { ascending: true });
-      if (!error && data && data.length > 0) {
+      if (error) {
+        console.error('[Database] Supabase getMessages error:', error.message, error.details);
+      } else if (data) {
         const msgMap = new Map<string, Message>();
         for (const m of sqliteMsgs) {
           msgMap.set(`${m.sender}_${m.content}_${m.created_at}`, m);
@@ -532,7 +572,9 @@ export async function getMessages(sessionId: string, nodeId?: string | null): Pr
           (a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
         );
       }
-    } catch (_) {}
+    } catch (err: any) {
+      console.error('[Database] Supabase getMessages exception:', err?.message || err);
+    }
   }
   return sqliteMsgs;
 }
