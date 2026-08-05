@@ -58,10 +58,30 @@ export type LearnerState = z.infer<typeof LearnerStateSchema>;
 // 1.3 NodeContent Schema (lazy node content)
 // ==========================================
 
+export const WorkedExampleSchema = z.object({
+  problem: z.string().min(1, "problem required"),
+  stepByStepSolution: z.string().min(1, "stepByStepSolution required"),
+  commonMistake: z.string().min(1, "commonMistake required"),
+  whyMistakeFails: z.string().min(1, "whyMistakeFails required"),
+});
+export type WorkedExample = z.infer<typeof WorkedExampleSchema>;
+
+export const CheckForUnderstandingSchema = z.object({
+  question: z.string().min(1, "question required"),
+  hint: z.string().min(1, "hint required"),
+  answer: z.string().min(1, "answer required"),
+});
+export type CheckForUnderstanding = z.infer<typeof CheckForUnderstandingSchema>;
+
 export const NodeContentSchema = z.object({
   nodeId: z.string().min(1, "nodeId required"),
+  coreConcept: z.string().optional(),
+  anchorAnalogy: z.string().optional(),
   explanation: z.string().min(1, "explanation required"),
   examples: z.array(z.string()).default([]),
+  workedExample: WorkedExampleSchema.optional(),
+  checkForUnderstanding: CheckForUnderstandingSchema.optional(),
+  commonMisconceptions: z.array(z.string()).optional(),
   generatedAt: z.string(),
   vocabularyLevelUsed: z.string(),
 });

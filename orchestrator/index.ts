@@ -439,16 +439,27 @@ export class KlaivoOrchestrator {
     }
 
     const confusionFlags = learnerState.masteryMap[nodeId]?.confusionFlags || [];
+    const masteredPrerequisites = tree.nodes
+      .filter((n) => n.status === 'mastered')
+      .map((n) => n.title);
+
     try {
       const teachingResult = await runStageWithTimeoutAndRetry(
         'TeachingAgent',
         (signal) =>
-          runTeachingAgent({
-            learnerId: learnerState.learnerId,
-            node,
-            vocabularyLevel: learnerState.vocabularyLevel,
-            confusionFlags,
-          }, undefined, signal),
+          runTeachingAgent(
+            {
+              learnerId: learnerState.learnerId,
+              node,
+              vocabularyLevel: learnerState.vocabularyLevel,
+              confusionFlags,
+              chatHistory: learnerState.chatHistory,
+              learnerGoal: learnerState.currentGoal,
+              masteredPrerequisites,
+            },
+            undefined,
+            signal
+          ),
         30000
       );
 
